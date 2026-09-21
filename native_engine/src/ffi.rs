@@ -51,6 +51,11 @@ pub extern "C" fn netstudio_engine_new() -> *mut Engine {
     }
 }
 
+/// Frees an engine previously returned by [`netstudio_engine_new`].
+///
+/// # Safety
+/// `engine` must be a non-null pointer from [`netstudio_engine_new`] that
+/// has not been freed before. Null pointers are ignored.
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_engine_free(engine: *mut Engine) {
     if !engine.is_null() {
@@ -58,6 +63,11 @@ pub unsafe extern "C" fn netstudio_engine_free(engine: *mut Engine) {
     }
 }
 
+/// Adds a probe target to the engine.
+///
+/// # Safety
+/// `engine` must be a live pointer from [`netstudio_engine_new`]; `name`
+/// and `host` must point to valid NUL-terminated UTF-8 C strings.
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_add_target(
     engine: *mut Engine,
@@ -100,6 +110,10 @@ pub unsafe extern "C" fn netstudio_add_target(
     true
 }
 
+/// Removes a probe target (and aborts its probe loop).
+///
+/// # Safety
+/// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_remove_target(engine: *mut Engine, id: u32) -> bool {
     if engine.is_null() {
@@ -109,6 +123,10 @@ pub unsafe extern "C" fn netstudio_remove_target(engine: *mut Engine, id: u32) -
     true
 }
 
+/// Starts all probe loops.
+///
+/// # Safety
+/// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_start(engine: *mut Engine) -> bool {
     if engine.is_null() {
@@ -118,6 +136,10 @@ pub unsafe extern "C" fn netstudio_start(engine: *mut Engine) -> bool {
     true
 }
 
+/// Stops all probe loops and aborts their tasks.
+///
+/// # Safety
+/// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_stop(engine: *mut Engine) -> bool {
     if engine.is_null() {
@@ -127,6 +149,10 @@ pub unsafe extern "C" fn netstudio_stop(engine: *mut Engine) -> bool {
     true
 }
 
+/// Returns whether the engine is currently running.
+///
+/// # Safety
+/// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_is_running(engine: *mut Engine) -> bool {
     if engine.is_null() {
@@ -135,6 +161,11 @@ pub unsafe extern "C" fn netstudio_is_running(engine: *mut Engine) -> bool {
     (*engine).is_running()
 }
 
+/// Returns a JSON snapshot of all targets; free with [`netstudio_free_string`].
+///
+/// # Safety
+/// `engine` must be a live pointer from [`netstudio_engine_new`]. The
+/// returned pointer must be freed exactly once via [`netstudio_free_string`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_get_metrics_json(engine: *mut Engine) -> *mut c_char {
     if engine.is_null() {
@@ -148,6 +179,11 @@ pub unsafe extern "C" fn netstudio_get_metrics_json(engine: *mut Engine) -> *mut
     }
 }
 
+/// Frees a string previously returned by this library.
+///
+/// # Safety
+/// `s` must be a non-null pointer returned by this library that has not
+/// been freed before. Null pointers are ignored.
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_free_string(s: *mut c_char) {
     if !s.is_null() {
@@ -155,6 +191,11 @@ pub unsafe extern "C" fn netstudio_free_string(s: *mut c_char) {
     }
 }
 
+/// One-shot probe; returns RTT in ms or `-1.0` on failure.
+///
+/// # Safety
+/// `host` must point to a valid NUL-terminated UTF-8 C string (or be null,
+/// which yields `-1.0`).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_quick_ping(
     host: *const c_char,
@@ -187,6 +228,11 @@ pub unsafe extern "C" fn netstudio_quick_ping(
     }
 }
 
+/// Starts a traceroute session; returns a session id (`0` = failure).
+///
+/// # Safety
+/// `host` must point to a valid NUL-terminated UTF-8 C string (or be null,
+/// which yields `0`).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_traceroute_start(
     host: *const c_char,
@@ -205,6 +251,11 @@ pub unsafe extern "C" fn netstudio_traceroute_start(
     get_traceroute_manager().start_traceroute(host_str, max_hops, timeout_ms)
 }
 
+/// Polls traceroute progress as JSON; free with [`netstudio_free_string`].
+///
+/// # Safety
+/// Any `u32` is accepted (unknown ids yield null); a non-null result must
+/// be freed exactly once via [`netstudio_free_string`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_traceroute_poll(session_id: u32) -> *mut c_char {
     if session_id == 0 {
@@ -221,6 +272,10 @@ pub unsafe extern "C" fn netstudio_traceroute_poll(session_id: u32) -> *mut c_ch
     }
 }
 
+/// Requests cancellation of a traceroute session.
+///
+/// # Safety
+/// Any `u32` is accepted (unknown ids simply return `false`).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_traceroute_stop(session_id: u32) -> bool {
     if session_id == 0 {
@@ -230,6 +285,10 @@ pub unsafe extern "C" fn netstudio_traceroute_stop(session_id: u32) -> bool {
     get_traceroute_manager().stop_traceroute(session_id)
 }
 
+/// Frees a traceroute session.
+///
+/// # Safety
+/// Any `u32` is accepted (unknown ids are ignored).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_traceroute_free(session_id: u32) {
     if session_id != 0 {
@@ -263,6 +322,11 @@ pub extern "C" fn netstudio_bandwidth_is_running() -> bool {
     get_bandwidth_monitor().is_running()
 }
 
+/// Starts a warp scan over an `ip:port,...` CSV; returns a session id (`0` = failure).
+///
+/// # Safety
+/// `endpoints_csv` must point to a valid NUL-terminated UTF-8 C string
+/// (or be null, which yields `0`).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_warp_start(
     endpoints_csv: *const c_char,
@@ -317,6 +381,11 @@ pub unsafe extern "C" fn netstudio_warp_start(
     get_warp_manager().start_scan(endpoints, parallel, timeout_ms)
 }
 
+/// Polls warp scan progress as JSON; free with [`netstudio_free_string`].
+///
+/// # Safety
+/// Any `u32` is accepted (unknown ids yield null); a non-null result must
+/// be freed exactly once via [`netstudio_free_string`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_warp_poll(session_id: u32) -> *mut c_char {
     if session_id == 0 {
@@ -332,6 +401,10 @@ pub unsafe extern "C" fn netstudio_warp_poll(session_id: u32) -> *mut c_char {
     }
 }
 
+/// Requests cancellation of a warp scan session.
+///
+/// # Safety
+/// Any `u32` is accepted (unknown ids simply return `false`).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_warp_stop(session_id: u32) -> bool {
     if session_id == 0 {
@@ -340,6 +413,10 @@ pub unsafe extern "C" fn netstudio_warp_stop(session_id: u32) -> bool {
     get_warp_manager().stop_scan(session_id)
 }
 
+/// Frees a warp scan session.
+///
+/// # Safety
+/// Any `u32` is accepted (unknown ids are ignored).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_warp_free(session_id: u32) {
     if session_id != 0 {

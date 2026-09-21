@@ -33,10 +33,19 @@ pub struct WarpProgress {
     pub results: Vec<WarpResult>,
 }
 
+/// Shared work queue: `(original index, (ip, port))` pairs for warp workers.
+type JobQueue = Arc<RwLock<Vec<(usize, (String, u16))>>>;
+
 pub struct WarpManager {
     sessions: Arc<RwLock<HashMap<u32, Arc<RwLock<WarpProgress>>>>>,
     cancel_flags: Arc<RwLock<HashMap<u32, Arc<AtomicBool>>>>,
     next_session_id: AtomicU32,
+}
+
+impl Default for WarpManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WarpManager {
@@ -57,7 +66,7 @@ impl WarpManager {
         timeout_ms: u32,
     ) -> u32 {
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
-        let parallel = (parallel.max(1).min(64)) as usize;
+        let parallel = parallel.clamp(1, 64) as usize;
         let timeout_ms = (if timeout_ms == 0 { 1200 } else { timeout_ms.min(5000) }) as u64;
 
         let progress = Arc::new(RwLock::new(WarpProgress {
@@ -122,7 +131,7 @@ fn run_scan_worker(
     use std::sync::mpsc::channel;
 
     let (tx, rx) = channel::<(usize, WarpResult)>();
-    let queue: Arc<RwLock<Vec<(usize, (String, u16))>>> = Arc::new(RwLock::new(
+    let queue: JobQueue = Arc::new(RwLock::new(
         endpoints.into_iter().enumerate().collect(),
     ));
 

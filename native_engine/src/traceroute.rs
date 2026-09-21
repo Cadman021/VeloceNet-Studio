@@ -131,6 +131,12 @@ pub struct TracerouteManager {
     next_session_id: AtomicU32,
 }
 
+impl Default for TracerouteManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TracerouteManager {
     pub fn new() -> Self {
         Self {

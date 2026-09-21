@@ -84,6 +84,12 @@ pub struct BandwidthMonitor {
     latest: Arc<RwLock<BandwidthSnapshot>>,
 }
 
+impl Default for BandwidthMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BandwidthMonitor {
     pub fn new() -> Self {
         Self {
@@ -270,7 +276,7 @@ fn read_interface_counters_win() -> Vec<IfCounters> {
         }
 
         let count = (*table).dwNumEntries as usize;
-        let rows = (*table).table.as_ptr() as *const MIB_IFROW;
+        let rows = (*table).table.as_ptr();
         let mut out = Vec::with_capacity(count);
 
         for i in 0..count {
@@ -418,10 +424,7 @@ fn read_process_traffic_win(total_up: f64, total_down: f64) -> Vec<ProcessTraffi
                     if conns.contains_key(&pid) {
                         let raw = &entry.szExeFile;
                         let len = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
-                        let name = String::from_utf8_lossy(
-                            &raw[..len].iter().map(|&c| c as u8).collect::<Vec<u8>>(),
-                        )
-                        .to_string();
+                        let name = String::from_utf8_lossy(&raw[..len]).to_string();
                         names.insert(pid, name);
                     }
                     if Process32Next(snap, &mut entry) == 0 {
@@ -471,7 +474,7 @@ fn read_process_traffic_win(total_up: f64, total_down: f64) -> Vec<ProcessTraffi
     // When idle there is nothing to attribute; still sort by connection
     // count so the busiest socket holders stay on top.
     if idle {
-        procs.sort_by(|a, b| b.connections.cmp(&a.connections));
+        procs.sort_by_key(|p| std::cmp::Reverse(p.connections));
     } else {
         procs.sort_by(|a, b| {
             b.total_bps
