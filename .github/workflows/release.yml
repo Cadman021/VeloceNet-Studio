@@ -1,0 +1,63 @@
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows bundle
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Build Rust engine
+        working-directory: native_engine
+        run: cargo build --release
+
+      - name: Stage engine DLL
+        shell: pwsh
+        run: |
+          Copy-Item native_engine/target/release/netstudio_engine.dll -Destination . -Force
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-pub
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Bundle DLL next to the executable
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build/windows/x64/runner/Release -Filter *.exe | Select-Object -First 1
+          if ($null -eq $exe) { throw "No exe found in build/windows/x64/runner/Release" }
+          Copy-Item netstudio_engine.dll -Destination build/windows/x64/runner/Release -Force
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath velocenet-studio-windows-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: velocenet-studio-windows-x64
+          path: velocenet-studio-windows-x64.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: velocenet-studio-windows-x64.zip
+          generate_release_notes: true

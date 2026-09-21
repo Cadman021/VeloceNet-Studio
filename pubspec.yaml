@@ -1,0 +1,46 @@
+name: netstudio
+description: "Cross-Platform Network Studio - Advanced Network Monitoring and Analysis"
+publish_to: 'none'
+version: 1.0.0+1
+
+repository: https://github.com/Cadman021/VeloceNet-Studio
+homepage: https://github.com/Cadman021/VeloceNet-Studio
+issue_tracker: https://github.com/Cadman021/VeloceNet-Studio/issues
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  ffi: ^2.1.2
+  intl: ^0.20.2
+  shared_preferences: ^2.3.2
+  url_launcher: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icons/app_icon.png"
+  windows:
+    generate: true
+    icon_path: "assets/icons/app_icon.png"
+  linux:
+    generate: true
+    icon_path: "assets/icons/app_icon.png"
+  macos:
+    generate: true
+    icon_path: "assets/icons/app_icon.png"

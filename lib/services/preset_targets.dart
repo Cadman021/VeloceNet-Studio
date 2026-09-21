@@ -1,0 +1,98 @@
+import '../models/ping_target.dart';
+
+class PresetTargets {
+  static List<PingTarget> getDefaultTargets() {
+    return const [
+      PingTarget(
+        id: 1,
+        name: 'Cloudflare DNS',
+        host: '1.1.1.1',
+        port: 53,
+        protocol: NetworkProtocol.icmp,
+        intervalMs: 800,
+        timeoutMs: 1500,
+      ),
+      PingTarget(
+        id: 2,
+        name: 'Google DNS',
+        host: '8.8.8.8',
+        port: 53,
+        protocol: NetworkProtocol.icmp,
+        intervalMs: 800,
+        timeoutMs: 1500,
+      ),
+      PingTarget(
+        id: 3,
+        name: 'Quad9 DNS',
+        host: '9.9.9.9',
+        port: 53,
+        protocol: NetworkProtocol.icmp,
+        intervalMs: 1000,
+        timeoutMs: 1500,
+      ),
+      PingTarget(
+        id: 4,
+        name: 'OpenDNS',
+        host: '208.67.222.222',
+        port: 53,
+        protocol: NetworkProtocol.icmp,
+        intervalMs: 1000,
+        timeoutMs: 1500,
+      ),
+      PingTarget(
+        id: 5,
+        name: 'Cloudflare HTTPS',
+        host: 'cloudflare.com',
+        port: 443,
+        protocol: NetworkProtocol.tcp,
+        intervalMs: 1200,
+        timeoutMs: 2000,
+      ),
+      PingTarget(
+        id: 6,
+        name: 'AWS Europe (Frankfurt)',
+        host: 'ec2.eu-central-1.amazonaws.com',
+        port: 443,
+        protocol: NetworkProtocol.tcp,
+        intervalMs: 1500,
+        timeoutMs: 2500,
+      ),
+      PingTarget(
+        id: 7,
+        name: 'AWS US-East (N. Virginia)',
+        host: 'ec2.us-east-1.amazonaws.com',
+        port: 443,
+        protocol: NetworkProtocol.tcp,
+        intervalMs: 1500,
+        timeoutMs: 2500,
+      ),
+      PingTarget(
+        id: 8,
+        name: 'GitHub Web',
+        host: 'github.com',
+        port: 443,
+        protocol: NetworkProtocol.tcp,
+        intervalMs: 1200,
+        timeoutMs: 2000,
+      ),
+      PingTarget(
+        id: 9,
+        name: 'Google Web',
+        host: 'google.com',
+        port: 443,
+        protocol: NetworkProtocol.tcp,
+        intervalMs: 1000,
+        timeoutMs: 2000,
+      ),
+      PingTarget(
+        id: 10,
+        name: 'Local Gateway',
+        host: '192.168.1.1',
+        port: 80,
+        protocol: NetworkProtocol.icmp,
+        intervalMs: 500,
+        timeoutMs: 1000,
+      ),
+    ];
+  }
+}

@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an idea for VeloceNet-Studio
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! Please describe the problem it solves, not just the solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve? e.g. "I can't export metrics..."
+      placeholder: As a network operator I want to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should it work? Mockups welcome.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Ping Matrix
+        - Traceroute
+        - Bandwidth
+        - Warp Scanner
+        - Settings / i18n / theming
+        - Rust engine / FFI
+        - Docs / CI / other
+    validations:
+      required: false
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to submit a PR for this

@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem in VeloceNet-Studio
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill in the details so we can reproduce it.
+  - type: input
+    id: version
+    attributes:
+      label: App version / commit
+      description: e.g. v1.0.0 or commit hash
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows 11 x64
+        - Windows 10 x64
+        - Linux
+        - macOS
+        - Other (specify below)
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine in use
+      description: Check the sidebar footer (Rust native vs Dart fallback)
+      options:
+        - Rust Engine (native)
+        - Dart Engine (fallback)
+        - Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect to happen instead?
+      placeholder: The Ping Matrix froze when I added 20 targets...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, one per line
+      placeholder: |
+        1. Go to Ping Matrix
+        2. Click "Add server" with host ...
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste `flutter run` console output, or drag screenshots here
+      render: text
+    validations:
+      required: false
