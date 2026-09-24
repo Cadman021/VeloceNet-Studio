@@ -4,10 +4,12 @@ import '../models/ping_metric.dart';
 import '../models/ping_target.dart';
 import '../services/network_engine_service.dart';
 import '../services/preset_targets.dart';
+import 'alert_log.dart';
 
 class PingMatrixController extends ChangeNotifier {
   final NetworkEngineService _service = NetworkEngineService();
   StreamSubscription<List<PingMetric>>? _metricsSub;
+  final AlertLog alertLog = AlertLog();
 
   List<PingTarget> _targets = [];
   final Map<int, PingMetric> _metrics = {};
@@ -63,6 +65,19 @@ class PingMatrixController extends ChangeNotifier {
 
     _metricsSub = _service.metricsStream.listen((list) {
       for (final m in list) {
+        final prev = _metrics[m.id];
+        if (prev != null && prev.status != m.status) {
+          final target = _targets.where((t) => t.id == m.id);
+          alertLog.noteTransition(
+            targetId: m.id,
+            targetName:
+                target.isEmpty ? m.name : target.first.name,
+            from: prev.status,
+            to: m.status,
+            rttMs: m.lastRttMs,
+            lossRate: m.lossRate,
+          );
+        }
         _metrics[m.id] = m;
       }
       notifyListeners();

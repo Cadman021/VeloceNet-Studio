@@ -8,12 +8,31 @@ import '../core/ffi/native_bindings.dart';
 import '../models/ping_metric.dart';
 import '../models/ping_target.dart';
 
+/// Decodes a native metrics snapshot off the UI thread (via `compute`).
+/// Must stay top-level for isolate spawning. Never throws: malformed
+/// payloads yield an empty list and the UI keeps the previous frame.
+List<PingMetric> decodeMetricsSnapshot(String jsonStr) {
+  try {
+    final List<dynamic> list = jsonDecode(jsonStr);
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(PingMetric.fromJson)
+        .toList();
+  } catch (_) {
+    return const [];
+  }
+}
+
 class NetworkEngineService {
   final NativeBindings _bindings = NativeBindings();
   Pointer<Void>? _nativeEngine;
   bool _isRunning = false;
   Timer? _pollTimer;
   Timer? _fallbackTimer;
+  // Guards overlapping decodes: if a previous snapshot is still being
+  // decoded in the background isolate, the tick is skipped instead of
+  // queueing up work (backpressure over latency).
+  bool _decoding = false;
 
   final StreamController<List<PingMetric>> _metricsController =
       StreamController<List<PingMetric>>.broadcast();
@@ -140,21 +159,27 @@ class NetworkEngineService {
     }
   }
 
-  void _pollNativeMetrics() {
-    if (_nativeEngine == null) return;
+  Future<void> _pollNativeMetrics() async {
+    if (_nativeEngine == null || _decoding || _metricsController.isClosed) return;
     final jsonStr = _bindings.getMetricsJson(_nativeEngine!);
     if (jsonStr == null || jsonStr.isEmpty) return;
 
+    _decoding = true;
     try {
-      final List<dynamic> list = jsonDecode(jsonStr);
-      final metrics = list.map((e) => PingMetric.fromJson(e as Map<String, dynamic>)).toList();
-
+      final metrics = await compute(decodeMetricsSnapshot, jsonStr);
+      if (_metricsController.isClosed) return;
+      if (metrics.isEmpty) {
+        debugPrint('Metrics snapshot decoded empty; keeping previous frame.');
+        return;
+      }
       for (final m in metrics) {
         _latestMetrics[m.id] = m;
       }
       _metricsController.add(_latestMetrics.values.toList());
     } catch (e) {
       debugPrint('Error decoding metrics: $e');
+    } finally {
+      _decoding = false;
     }
   }
 

@@ -71,6 +71,14 @@ class SettingsScreen extends StatelessWidget {
                       value: 'fa',
                       label: Text(strings.get('farsi')),
                     ),
+                    ButtonSegment(
+                      value: 'ru',
+                      label: Text(strings.get('russian')),
+                    ),
+                    ButtonSegment(
+                      value: 'zh',
+                      label: Text(strings.get('chinese')),
+                    ),
                   ],
                   selected: {settings.locale.languageCode},
                   onSelectionChanged: (s) =>

@@ -8,6 +8,7 @@ import '../models/ping_target.dart';
 import '../state/ping_matrix_controller.dart';
 import 'bandwidth/bandwidth_screen.dart';
 import 'ping_matrix/ping_matrix_screen.dart';
+import 'portscan/portscan_screen.dart';
 import 'settings/settings_screen.dart';
 import 'traceroute/traceroute_screen.dart';
 import 'warp/warp_controller.dart';
@@ -177,6 +178,11 @@ class _MainShellViewState extends State<MainShellView> {
                   ),
                   _buildNavItem(
                     index: 4,
+                    icon: Icons.radar,
+                    label: strings.get('portScanner'),
+                  ),
+                  _buildNavItem(
+                    index: 5,
                     icon: Icons.settings_rounded,
                     label: strings.get('settings'),
                   ),
@@ -247,6 +253,7 @@ class _MainShellViewState extends State<MainShellView> {
                     controller: _warpController,
                     onAddToPingMatrix: _addWarpEndpointsToMatrix,
                   ),
+                  const PortscanScreen(),
                   SettingsScreen(settings: widget.settings),
                 ],
               ),

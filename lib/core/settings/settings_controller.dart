@@ -30,7 +30,9 @@ class SettingsController extends ChangeNotifier {
           _themeMode = ThemeMode.system;
       }
       final loc = prefs.getString(_kLocale);
-      _locale = (loc == 'fa') ? const Locale('fa') : const Locale('en');
+      _locale = allowedLocales.contains(loc)
+          ? Locale(loc!)
+          : const Locale('en');
     } catch (_) {
       // Keep defaults on storage failure.
     }
@@ -49,8 +51,10 @@ class SettingsController extends ChangeNotifier {
     } catch (_) {}
   }
 
+  static const allowedLocales = ['en', 'fa', 'ru', 'zh'];
+
   Future<void> setLocale(Locale locale) async {
-    if (locale.languageCode != 'fa' && locale.languageCode != 'en') return;
+    if (!allowedLocales.contains(locale.languageCode)) return;
     _locale = Locale(locale.languageCode);
     notifyListeners();
     try {

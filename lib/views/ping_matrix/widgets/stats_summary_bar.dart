@@ -1,8 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/i18n/app_strings.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_x.dart';
+import '../../../models/alert_event.dart';
+import '../../../services/metrics_csv.dart';
 import '../../../state/ping_matrix_controller.dart';
+import 'alert_log_dialog.dart';
 
 class StatsSummaryBar extends StatelessWidget {
   final PingMatrixController controller;
@@ -101,6 +107,54 @@ class StatsSummaryBar extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  ListenableBuilder(
+                    listenable: controller.alertLog,
+                    builder: (context, _) {
+                      final unread = controller.alertLog.unreadCount;
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          IconButton(
+                            onPressed: () => AlertLogDialog.show(
+                                context, controller.alertLog),
+                            icon: const Icon(
+                                Icons.notifications_outlined, size: 20),
+                            tooltip: strings.get('alerts'),
+                            color: context.textSecondaryColor,
+                          ),
+                          if (unread > 0)
+                            Positioned(
+                              right: 6,
+                              top: 6,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: unread > 0 &&
+                                          controller.alertLog.events
+                                                  .isNotEmpty &&
+                                          controller.alertLog.events.first
+                                                  .severity ==
+                                              AlertSeverity.critical
+                                      ? AppColors.latencyCritical
+                                      : AppColors.primary,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  unread > 99 ? '99+' : '$unread',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                  _ExportCsvButton(controller: controller),
                   IconButton(
                     onPressed: controller.resetMetrics,
                     icon: const Icon(Icons.refresh_rounded, size: 20),
@@ -194,6 +248,108 @@ class StatsSummaryBar extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// CSV export button with in-progress and success feedback.
+///
+/// While an export is running the button shows a spinner and ignores taps,
+/// so impatient double-clicks can't queue duplicate downloads. On success
+/// a confirmation SnackBar shows the file name + size with a copy-path
+/// action; on failure a localized error is shown instead.
+class _ExportCsvButton extends StatefulWidget {
+  final PingMatrixController controller;
+  const _ExportCsvButton({required this.controller});
+
+  @override
+  State<_ExportCsvButton> createState() => _ExportCsvButtonState();
+}
+
+class _ExportCsvButtonState extends State<_ExportCsvButton> {
+  bool _exporting = false;
+
+  Future<void> _export() async {
+    if (_exporting) return; // debounce double-clicks
+    setState(() => _exporting = true);
+    final strings = AppStrings.of(context);
+    try {
+      final path = await exportMetricsCsv(widget.controller.metrics);
+      if (!mounted) return;
+      final fileName = path.split(RegExp(r'[/\\]')).last;
+      String size = '';
+      try {
+        final bytes = await File(path).length();
+        size = bytes < 1024
+            ? ' ($bytes B)'
+            : ' (${(bytes / 1024).toStringAsFixed(1)} KB)';
+      } catch (_) {}
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded,
+                  color: AppColors.latencyFast, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '${strings.get('csvSaved')}: $fileName$size',
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: context.surfaceColor,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: strings.get('copyPath'),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: path));
+            },
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      debugPrint('CSV export failed: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline_rounded,
+                  color: AppColors.latencyCritical, size: 20),
+              const SizedBox(width: 10),
+              Expanded(child: Text(strings.get('exportFailed'))),
+            ],
+          ),
+          backgroundColor: context.surfaceColor,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
+    if (_exporting) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return IconButton(
+      onPressed: _export,
+      icon: const Icon(Icons.download_rounded, size: 20),
+      tooltip: strings.get('exportCsv'),
+      color: context.textSecondaryColor,
     );
   }
 }

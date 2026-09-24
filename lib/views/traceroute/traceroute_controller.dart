@@ -13,7 +13,13 @@ class TracerouteController extends ChangeNotifier {
   Timer? _pollTimer;
   int _activeSessionId = 0;
   Process? _fallbackProcess;
+  StreamSubscription<String>? _fallbackSub;
   bool _isUsingNative = false;
+  // Generation counter: async callbacks from a previous run (stdout lines,
+  // exit codes, DNS lookups) are ignored once a new run starts or stop()
+  // is called. Without this, a killed process's buffered output would
+  // overwrite the new trace's progress (stale-write race).
+  int _runId = 0;
 
   TracerouteProgress get progress => _progress;
   bool get isRunning => _progress.isRunning;
@@ -46,9 +52,48 @@ class TracerouteController extends ChangeNotifier {
     return validHops.map((h) => h.rttMs).reduce((a, b) => a > b ? a : b);
   }
 
+  /// Validates a user-supplied trace target: IPv4, IPv6 (with or without
+  /// brackets) or a DNS hostname. Returns the normalized host, or null.
+  static String? normalizeTraceHost(String raw) {
+    var host = raw.trim().replaceAll(RegExp(r'^https?://'), '').split('/')[0].trim();
+    if (host.startsWith('[') && host.endsWith(']') && host.length > 2) {
+      host = host.substring(1, host.length - 1);
+    }
+    if (host.isEmpty || host.length > 253) return null;
+    // IPv4 (octet-checked, not just dotted digits).
+    if (RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host)) {
+      final ok = host.split('.').every((o) {
+        final n = int.tryParse(o);
+        return n != null && n >= 0 && n <= 255;
+      });
+      return ok ? host : null;
+    }
+    // IPv6 literal.
+    if (host.contains(':')) {
+      final addr = InternetAddress.tryParse(host);
+      return (addr != null && addr.type == InternetAddressType.IPv6) ? host : null;
+    }
+    // Hostname (labels up to 63 chars, no leading/trailing hyphens).
+    const label = r'[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?';
+    if (RegExp('^$label(?:\\.$label)*\$').hasMatch(host)) return host;
+    return null;
+  }
+
   void start(String rawHost, {int maxHops = 30, int timeoutMs = 1500}) {
-    final host = rawHost.trim().replaceAll(RegExp(r'^https?://'), '').split('/')[0];
-    if (host.isEmpty) return;
+    final host = normalizeTraceHost(rawHost);
+    if (host == null) {
+      _progress = TracerouteProgress.initial(rawHost.trim()).copyWith(
+        isRunning: false,
+        isCompleted: false,
+        error: 'Invalid host. Use an IPv4/IPv6 address or hostname.',
+      );
+      notifyListeners();
+      return;
+    }
+    // Clamp before crossing FFI (native maxHops is a u8; unclamped Dart
+    // ints would truncate) and before building system-prober arguments.
+    maxHops = maxHops.clamp(1, 64);
+    timeoutMs = timeoutMs.clamp(100, 10000);
 
     stop();
 
@@ -113,7 +158,7 @@ class TracerouteController extends ChangeNotifier {
             _activeSessionId = 0;
           }
         } catch (e) {
-          print('Traceroute poll parse error: $e');
+          debugPrint('Traceroute poll parse error: $e');
         }
       }
     });
@@ -121,15 +166,23 @@ class TracerouteController extends ChangeNotifier {
 
   Future<void> _startFallbackTraceroute(String host, int maxHops, int timeoutMs) async {
     _isUsingNative = false;
+    final int runId = ++_runId;
 
-    // Resolve target IP first
+    // Resolve target IP first (prefer IPv4: the system probers below and
+    // the destination check both assume v4 unless the target is IPv6).
     try {
-      final addrs = await InternetAddress.lookup(host);
+      final addrs = await InternetAddress.lookup(host)
+          .timeout(Duration(milliseconds: timeoutMs));
+      if (runId != _runId) return; // superseded while resolving
       if (addrs.isNotEmpty) {
-        _progress = _progress.copyWith(targetIp: addrs.first.address);
+        final v4 = addrs.where((a) => a.type == InternetAddressType.IPv4);
+        final target = (host.contains(':') ? addrs.first : v4.isNotEmpty ? v4.first : addrs.first);
+        _progress = _progress.copyWith(targetIp: target.address);
         notifyListeners();
       }
-    } catch (_) {}
+    } catch (_) {
+      if (runId != _runId) return;
+    }
 
     final List<TracerouteHop> collectedHops = [];
     final executable = Platform.isWindows ? 'tracert' : 'traceroute';
@@ -137,40 +190,51 @@ class TracerouteController extends ChangeNotifier {
         ? ['-d', '-h', '$maxHops', '-w', '$timeoutMs', host]
         : ['-n', '-m', '$maxHops', '-w', '${(timeoutMs / 1000).ceil()}', host];
 
+    Process? proc;
     try {
-      _fallbackProcess = await Process.start(executable, arguments);
-
-      _fallbackProcess!.stdout
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) {
-        final parsedHop = _parseTracertLine(line);
-        if (parsedHop != null) {
-          collectedHops.removeWhere((h) => h.hopNum == parsedHop.hopNum);
-          collectedHops.add(parsedHop);
-          _progress = _progress.copyWith(
-            currentHop: parsedHop.hopNum,
-            hops: List.from(collectedHops),
-          );
-          notifyListeners();
-        }
-      });
-
-      _fallbackProcess!.exitCode.then((code) {
-        _progress = _progress.copyWith(
-          isRunning: false,
-          isCompleted: true,
-        );
-        notifyListeners();
-      });
+      proc = await Process.start(executable, arguments);
     } catch (e) {
+      if (runId != _runId) return;
       _progress = _progress.copyWith(
         isRunning: false,
         isCompleted: true,
         error: 'System traceroute failed: $e',
       );
       notifyListeners();
+      return;
     }
+    if (runId != _runId) {
+      // A newer run (or stop) already took over; kill this orphan.
+      proc.kill();
+      return;
+    }
+    _fallbackProcess = proc;
+
+    _fallbackSub = proc.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) {
+      if (runId != _runId) return; // stale output from a killed run
+      final parsedHop = _parseTracertLine(line);
+      if (parsedHop != null) {
+        collectedHops.removeWhere((h) => h.hopNum == parsedHop.hopNum);
+        collectedHops.add(parsedHop);
+        _progress = _progress.copyWith(
+          currentHop: parsedHop.hopNum,
+          hops: List.from(collectedHops),
+        );
+        notifyListeners();
+      }
+    });
+
+    proc.exitCode.then((code) {
+      if (runId != _runId) return; // stopped or superseded; leave state alone
+      _progress = _progress.copyWith(
+        isRunning: false,
+        isCompleted: true,
+      );
+      notifyListeners();
+    });
   }
 
   TracerouteHop? _parseTracertLine(String line) {
@@ -200,26 +264,42 @@ class TracerouteController extends ChangeNotifier {
       );
     }
 
-    // Look for IP address
-    final ipRegex = RegExp(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})');
-    final ipMatch = ipRegex.firstMatch(rest);
-    final ipStr = ipMatch != null ? ipMatch.group(1)! : '*';
+    // Look for IP address: IPv4 first, then IPv6 literal.
+    // (`-d`/`-n` keep output numeric, so tokens are clean addresses.)
+    String ipStr = '*';
+    final ipv4Match = RegExp(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})').firstMatch(rest);
+    if (ipv4Match != null) {
+      ipStr = ipv4Match.group(1)!;
+    } else {
+      final ipv6Match = RegExp(
+        r'((?:[0-9A-Fa-f]{1,4}:){2,}[0-9A-Fa-f:.]{0,45})(?=\s|$)',
+      ).firstMatch(rest);
+      if (ipv6Match != null) ipStr = ipv6Match.group(1)!;
+    }
 
-    // Extract RTT
-    final rttRegex = RegExp(r'(\d+)\s*ms|<1\s*ms');
-    final rttMatches = rttRegex.allMatches(rest).toList();
-    double rtt = 1.0;
-    if (rttMatches.isNotEmpty) {
-      final raw = rttMatches.first.group(0)!;
-      if (raw.contains('<1')) {
-        rtt = 0.5;
+    // Average all RTT samples on the line (Windows prints 3, Linux prints
+    // 3 decimals like "0.123 ms"). `<1 ms` counts as 0.5; `*` is skipped.
+    // The old code used only the first sample and truncated decimals.
+    final rttRegex = RegExp(r'(<1\s*ms|\d+(?:\.\d+)?\s*ms)');
+    double rttSum = 0;
+    int rttCount = 0;
+    for (final m in rttRegex.allMatches(rest)) {
+      final raw = m.group(1)!;
+      if (raw.startsWith('<')) {
+        rttSum += 0.5;
+        rttCount++;
       } else {
-        final numMatch = RegExp(r'\d+').firstMatch(raw);
-        if (numMatch != null) {
-          rtt = double.tryParse(numMatch.group(0)!) ?? 1.0;
+        final num = RegExp(r'\d+(?:\.\d+)?').firstMatch(raw);
+        if (num != null) {
+          final v = double.tryParse(num.group(0)!);
+          if (v != null) {
+            rttSum += v;
+            rttCount++;
+          }
         }
       }
     }
+    final double rtt = rttCount > 0 ? rttSum / rttCount : 1.0;
 
     final isDest = _progress.targetIp.isNotEmpty && ipStr == _progress.targetIp;
 
@@ -237,6 +317,11 @@ class TracerouteController extends ChangeNotifier {
     _pollTimer?.cancel();
     _pollTimer = null;
 
+    // Invalidate any in-flight fallback callbacks (stdout/exitCode/DNS).
+    _runId++;
+    _fallbackSub?.cancel();
+    _fallbackSub = null;
+
     final int sessionToFree = _activeSessionId;
     _activeSessionId = 0;
     if (sessionToFree != 0) {
@@ -249,7 +334,9 @@ class TracerouteController extends ChangeNotifier {
     }
 
     if (_fallbackProcess != null) {
-      _fallbackProcess!.kill();
+      try {
+        _fallbackProcess!.kill();
+      } catch (_) {}
       _fallbackProcess = null;
     }
 

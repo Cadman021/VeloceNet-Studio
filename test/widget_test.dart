@@ -9,6 +9,7 @@ import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:netstudio/core/i18n/app_strings.dart';
 import 'package:netstudio/core/settings/settings_controller.dart';
 import 'package:netstudio/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   testWidgets('NetStudio app smoke test', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
+    await AppStrings.ensureLoaded();
     final settings = SettingsController();
     await settings.load();
     // Desktop-sized surface: sidebar (250) + content need width.

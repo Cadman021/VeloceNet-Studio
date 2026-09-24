@@ -7,6 +7,9 @@ import 'views/main_shell_view.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Dictionaries must be in memory before the first frame: AppStrings.get
+  // is synchronous by design (see core/i18n/app_strings.dart).
+  await AppStrings.ensureLoaded();
   final settings = SettingsController();
   await settings.load();
   runApp(NetStudioApp(settings: settings));

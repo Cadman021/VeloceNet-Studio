@@ -251,71 +251,63 @@ fn read_process_traffic(_total_up: f64, _total_down: f64) -> Vec<ProcessTraffic>
     Vec::new()
 }
 
-// ---------------- Windows: GetIfTable ----------------
+// ---------------- Windows: GetIfTable2 (64-bit counters) ----------------
 #[cfg(windows)]
 fn read_interface_counters_win() -> Vec<IfCounters> {
-    use std::mem::size_of;
     use windows_sys::Win32::NetworkManagement::IpHelper::{
-        GetIfTable, MIB_IFROW, MIB_IFTABLE,
+        FreeMibTable, GetIfTable2, MIB_IF_TABLE2,
     };
+    use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 
+    // NOTE: the old code used GetIfTable (MIB_IFROW) whose dwInOctets /
+    // dwOutOctets are u32 and wrap every 4 GiB — on a gigabit link that is
+    // roughly every 30 s, so deltas were constantly wrong. GetIfTable2
+    // exposes 64-bit InOctets/OutOctets plus a real link speed and UTF-16
+    // friendly names.
     unsafe {
-        let mut size: u32 = 0;
-        // First call with null buffer to get required size.
-        // Returns ERROR_INSUFFICIENT_BUFFER (122) and sets size.
-        GetIfTable(std::ptr::null_mut(), &mut size, 0);
-        if size == 0 || size > 8 * 1024 * 1024 {
+        let mut table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
+        if GetIfTable2(&mut table) != 0 || table.is_null() {
             return Vec::new();
         }
 
-        let mut buf = vec![0u8; size as usize];
-        let table = buf.as_mut_ptr() as *mut MIB_IFTABLE;
-        let ret = GetIfTable(table, &mut size, 0);
-        if ret != 0 {
-            return Vec::new();
-        }
-
-        let count = (*table).dwNumEntries as usize;
-        let rows = (*table).table.as_ptr();
+        let count = (*table).NumEntries as usize;
+        let rows = (*table).Table.as_ptr();
         let mut out = Vec::with_capacity(count);
 
         for i in 0..count {
             let row = &*rows.add(i);
-            // bDescr is [u8; 256] + dwDescrLen (windows-sys naming).
-            // NOTE: bDescr holds an ANSI (single-byte) description, NOT hex.
-            // The old code used format!("{:x?}", ...) which produced strings
-            // like "[53, 6f, ...]" and broke readable interface names.
-            let descr_len = (row.dwDescrLen as usize).min(256);
-            let descr_bytes = &row.bDescr[..descr_len];
-            let name = String::from_utf8_lossy(descr_bytes)
-                .trim_matches(char::from(0))
-                .trim()
-                .to_string();
-            // dwPhysAddr not needed; alias = description
-            // dwOperStatus is MIB_IF_OPER_STATUS: 0 NON_OPERATIONAL,
-            // 1 UNREACHABLE, 2 DISCONNECTED, 3 CONNECTING, 4 CONNECTED,
-            // 5 OPERATIONAL. Only 4/5 mean the link passes traffic.
-            // (The old code compared against 1, so every adapter looked
-            // down, totals stayed 0 and the chart stayed flat forever.)
-            let is_up = row.dwOperStatus == 4 || row.dwOperStatus == 5;
+            let alias = decode_wide(&row.Alias);
+            let descr = decode_wide(&row.Description);
+            // IfOperStatusUp == 1. Anything else (down, dormant, testing…)
+            // reports stale counters, so it is listed but excluded from totals.
+            let is_up = row.OperStatus == IfOperStatusUp;
+            let label = if !alias.is_empty() {
+                alias.clone()
+            } else if !descr.is_empty() {
+                descr.clone()
+            } else {
+                format!("if{}", row.InterfaceIndex)
+            };
             out.push(IfCounters {
-                alias: name.clone(),
-                name: if name.is_empty() {
-                    format!("if{}", row.dwIndex)
-                } else {
-                    format!("if{} {}", row.dwIndex, name)
-                },
-                in_octets: row.dwInOctets as u64,
-                out_octets: row.dwOutOctets as u64,
-                speed_bps: row.dwSpeed as u64,
+                alias,
+                name: format!("if{} {}", row.InterfaceIndex, label),
+                in_octets: row.InOctets,
+                out_octets: row.OutOctets,
+                speed_bps: row.TransmitLinkSpeed,
                 is_up,
             });
         }
-        // MIB_IFTABLE.dwInOctets is u32 and wraps; saturating_sub in the
-        // delta math handles wrap-around as a small glitch, acceptable.
-        let _ = size_of::<MIB_IFROW>();
+
+        FreeMibTable(table as *mut std::ffi::c_void);
         out
     }
+}
+
+/// Decodes a NUL-terminated UTF-16 WCHAR buffer (e.g. `MIB_IF_ROW2::Alias`).
+#[cfg(windows)]
+fn decode_wide(buf: &[u16]) -> String {
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..len]).trim().to_string()
 }
 
 // ---------------- Windows: per-process via TCP/UDP tables ----------------

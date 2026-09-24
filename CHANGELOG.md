@@ -9,6 +9,27 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Nothing yet — see `main` for work toward the next release.
 
+## [1.1.0] — 2026-09-24
+
+### Added
+- JSON dictionaries: one file per language in `assets/lang/` (`en`, `fa`, `ru`, `zh`), loaded at startup with English fallback; `test/i18n_parity_test.dart` enforces identical key sets.
+- Russian and Chinese UI (locale switch in Settings, persisted; Persian stays the only RTL locale).
+- Release workflow now ships Windows x64 (zip), Linux x64 (tarball) and macOS arm64 (zipped `.app`, Gatekeeper note in README).
+- Port Scanner tab: TCP sweep with `host` + `ports` spec (`80,443,8000-8010`, max 4096 ports), bounded-concurrency batches, open/closed/filtered states with well-known service guesses, copy-open and clear actions. Fully localized and theme-aware.
+- Alert log: status transitions recorded with severity (critical/warning/info), unread badge on the matrix bell (red when the latest is critical), newest-first dialog with per-event RTT/loss detail and clear-all. Boot baselines (`pending` → anything) are not logged.
+- Unit tests for traceroute host validation, metrics-snapshot decoding, the alert log and CSV export.
+- CSV export: one-click snapshot of all target metrics (RFC 4180 quoting, sorted by id) to `Documents/VeloceNet-Studio/velocenet-metrics-<timestamp>.csv`, with copy-path feedback. The button shows a spinner and ignores taps while exporting (no duplicate downloads), then confirms with file name + size.
+
+### Fixed
+- Traceroute fallback races: stale stdout/exit-code/DNS callbacks from a killed run can no longer overwrite the new trace (generation counter + subscription cancel in `stop()`).
+- Traceroute host validation: IPv4 (octet-checked), IPv6 (±brackets) and hostnames accepted; shell metacharacters and empty hosts rejected with an error instead of a silent no-op.
+- Traceroute parser: IPv6 hop addresses recognized; RTT now averages all samples per line (was first-sample only, decimals truncated on Linux).
+- Traceroute `maxHops`/`timeoutMs` clamped in Dart before FFI (unclamped `maxHops` truncated to `u8`) and before system-prober arguments.
+- Metrics snapshot JSON now decodes in a background isolate (`compute`) with backpressure (overlapping ticks skipped); malformed payloads keep the previous frame.
+
+### Changed
+- Bandwidth interface counters migrated from `GetIfTable` (32-bit, wraps every ~4 GiB) to `GetIfTable2` (64-bit `InOctets`/`OutOctets`, real `TransmitLinkSpeed`, UTF-16 friendly names). Requires the `Win32_NetworkManagement_Ndis` windows-sys feature.
+
 ## [1.0.0] — 2026-09-21
 
 First public release.
@@ -35,5 +56,6 @@ First public release.
 - Native metrics polling interval 200 ms → 500 ms (less UI-thread JSON pressure); `print` → `debugPrint` in the engine service.
 - Rank medals (🥇🥈🥉) replaced with text ranks (`#1`, `#2`, …) for font/i18n safety.
 
-[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.0.0
