@@ -7,6 +7,7 @@ import '../core/theme/app_colors.dart';
 import '../models/ping_target.dart';
 import '../state/ping_matrix_controller.dart';
 import 'bandwidth/bandwidth_screen.dart';
+import 'dnslookup/dnslookup_screen.dart';
 import 'ping_matrix/ping_matrix_screen.dart';
 import 'portscan/portscan_screen.dart';
 import 'settings/settings_screen.dart';
@@ -183,6 +184,11 @@ class _MainShellViewState extends State<MainShellView> {
                   ),
                   _buildNavItem(
                     index: 5,
+                    icon: Icons.dns,
+                    label: strings.get('dnsLookup'),
+                  ),
+                  _buildNavItem(
+                    index: 6,
                     icon: Icons.settings_rounded,
                     label: strings.get('settings'),
                   ),
@@ -254,6 +260,7 @@ class _MainShellViewState extends State<MainShellView> {
                     onAddToPingMatrix: _addWarpEndpointsToMatrix,
                   ),
                   const PortscanScreen(),
+                  const DnslookupScreen(),
                   SettingsScreen(settings: widget.settings),
                 ],
               ),

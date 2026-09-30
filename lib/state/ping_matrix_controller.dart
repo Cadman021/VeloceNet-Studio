@@ -120,6 +120,21 @@ class PingMatrixController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Adds imported drafts, reassigning collision-free ids above the current
+  /// maximum (stored backup ids are ignored). Returns the number added.
+  int importTargets(List<PingTarget> drafts) {
+    int nextId = _targets.isEmpty
+        ? 1
+        : _targets.map((t) => t.id).reduce((a, b) => a > b ? a : b) + 1;
+    for (final d in drafts) {
+      final target = d.copyWith(id: nextId++);
+      _targets.add(target);
+      _service.addTarget(target);
+    }
+    notifyListeners();
+    return drafts.length;
+  }
+
   void resetMetrics() {
     _service.stop();
     _metrics.clear();

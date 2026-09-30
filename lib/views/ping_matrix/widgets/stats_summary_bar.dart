@@ -7,8 +7,10 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_x.dart';
 import '../../../models/alert_event.dart';
 import '../../../services/metrics_csv.dart';
+import '../../../services/target_config_io.dart';
 import '../../../state/ping_matrix_controller.dart';
 import 'alert_log_dialog.dart';
+import 'import_targets_dialog.dart';
 
 class StatsSummaryBar extends StatelessWidget {
   final PingMatrixController controller;
@@ -154,7 +156,63 @@ class StatsSummaryBar extends StatelessWidget {
                       );
                     },
                   ),
-                  _ExportCsvButton(controller: controller),
+                  _ExportFileButton(
+                    icon: Icons.download_rounded,
+                    tooltip: strings.get('exportCsv'),
+                    savedMessageKey: 'csvSaved',
+                    run: () => exportMetricsCsv(controller.metrics),
+                  ),
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.import_export_rounded,
+                        size: 20, color: context.textSecondaryColor),
+                    tooltip: strings.get('importExport'),
+                    color: context.surfaceColor,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: BorderSide(color: context.borderColor),
+                    ),
+                    onSelected: (val) {
+                      if (val == 'export_json') {
+                        _exportTargetsFile(context, controller);
+                      } else if (val == 'import_json') {
+                        ImportTargetsDialog.show(context, controller);
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'export_json',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.download_rounded,
+                                size: 16, color: AppColors.primary),
+                            const SizedBox(width: 8),
+                            Text(
+                              strings.get('exportTargets'),
+                              style: TextStyle(
+                                  color: context.textPrimaryColor,
+                                  fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'import_json',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.upload_rounded,
+                                size: 16, color: AppColors.primary),
+                            const SizedBox(width: 8),
+                            Text(
+                              strings.get('importTargets'),
+                              style: TextStyle(
+                                  color: context.textPrimaryColor,
+                                  fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                   IconButton(
                     onPressed: controller.resetMetrics,
                     icon: const Icon(Icons.refresh_rounded, size: 20),
@@ -252,21 +310,30 @@ class StatsSummaryBar extends StatelessWidget {
   }
 }
 
-/// CSV export button with in-progress and success feedback.
+/// File export button with in-progress and success feedback.
 ///
 /// While an export is running the button shows a spinner and ignores taps,
 /// so impatient double-clicks can't queue duplicate downloads. On success
 /// a confirmation SnackBar shows the file name + size with a copy-path
 /// action; on failure a localized error is shown instead.
-class _ExportCsvButton extends StatefulWidget {
-  final PingMatrixController controller;
-  const _ExportCsvButton({required this.controller});
+class _ExportFileButton extends StatefulWidget {
+  final IconData icon;
+  final String tooltip;
+  final String savedMessageKey;
+  final Future<String> Function() run;
+
+  const _ExportFileButton({
+    required this.icon,
+    required this.tooltip,
+    required this.savedMessageKey,
+    required this.run,
+  });
 
   @override
-  State<_ExportCsvButton> createState() => _ExportCsvButtonState();
+  State<_ExportFileButton> createState() => _ExportFileButtonState();
 }
 
-class _ExportCsvButtonState extends State<_ExportCsvButton> {
+class _ExportFileButtonState extends State<_ExportFileButton> {
   bool _exporting = false;
 
   Future<void> _export() async {
@@ -274,7 +341,7 @@ class _ExportCsvButtonState extends State<_ExportCsvButton> {
     setState(() => _exporting = true);
     final strings = AppStrings.of(context);
     try {
-      final path = await exportMetricsCsv(widget.controller.metrics);
+      final path = await widget.run();
       if (!mounted) return;
       final fileName = path.split(RegExp(r'[/\\]')).last;
       String size = '';
@@ -294,7 +361,7 @@ class _ExportCsvButtonState extends State<_ExportCsvButton> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  '${strings.get('csvSaved')}: $fileName$size',
+                  '${strings.get(widget.savedMessageKey)}: $fileName$size',
                   overflow: TextOverflow.ellipsis,
                   maxLines: 2,
                 ),
@@ -334,7 +401,6 @@ class _ExportCsvButtonState extends State<_ExportCsvButton> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings.of(context);
     if (_exporting) {
       return const Padding(
         padding: EdgeInsets.all(12),
@@ -347,9 +413,56 @@ class _ExportCsvButtonState extends State<_ExportCsvButton> {
     }
     return IconButton(
       onPressed: _export,
-      icon: const Icon(Icons.download_rounded, size: 20),
-      tooltip: strings.get('exportCsv'),
+      icon: Icon(widget.icon, size: 20),
+      tooltip: widget.tooltip,
       color: context.textSecondaryColor,
+    );
+  }
+}
+
+/// Exports the server list to a timestamped JSON backup. Small single
+/// write, so no spinner: a success/error SnackBar is feedback enough.
+Future<void> _exportTargetsFile(
+    BuildContext context, PingMatrixController controller) async {
+  final strings = AppStrings.of(context);
+  try {
+    final path = await exportTargetsFile(controller.targets);
+    if (!context.mounted) return;
+    final fileName = path.split(RegExp(r'[/\\]')).last;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded,
+                color: AppColors.latencyFast, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${strings.get('targetsSaved')}: $fileName',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: context.surfaceColor,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: strings.get('copyPath'),
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: path));
+          },
+        ),
+      ),
+    );
+  } catch (e) {
+    if (!context.mounted) return;
+    debugPrint('Targets export failed: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(strings.get('exportFailed')),
+        backgroundColor: context.surfaceColor,
+      ),
     );
   }
 }

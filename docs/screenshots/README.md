@@ -12,5 +12,6 @@ The main [README](../../README.md) embeds these files:
 | `06-settings.png` | Settings page (re-capture: 4 languages + version in About) | 1600×900 |
 | `07-portscan.png` | Port Scanner with finished scan (open + closed rows) | 1600×900 |
 | `08-alerts.png` | Ping Matrix with the alert-log dialog open | 1600×900 |
+| `09-dns.png` | DNS Lookup with A-record results for a domain | 1600×900 |
 
 How to capture: run `flutter run -d windows`, switch theme/language in Settings, press <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, save the PNG under the exact name above, then commit.

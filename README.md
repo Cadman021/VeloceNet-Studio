@@ -9,7 +9,7 @@
 
 Cross-platform **network monitoring and analysis studio** built with **Flutter** + a **Rust engine (Tokio, via FFI)**.
 
-Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp endpoint scanner and TCP port scanner — with Light/Dark/System themes and English/فارسی/Русский/中文 UI.
+Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp endpoint scanner, TCP port scanner and DNS lookup — with Light/Dark/System themes and English/فارسی/Русский/中文 UI.
 
 > License: **GPL-3.0-or-later** — see [LICENSE](LICENSE).
 
@@ -33,6 +33,10 @@ Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp end
 |---|---|
 | ![Port Scanner](docs/screenshots/07-portscan.png) | ![Alert log](docs/screenshots/08-alerts.png) |
 
+| DNS Lookup |
+|---|
+| ![DNS Lookup](docs/screenshots/09-dns.png) |
+
 ## Features
 
 - **Ping Matrix** — concurrent ICMP (Windows IP Helper, no admin needed) + TCP-handshake probes, live sparklines, RTT avg/min/max, RFC 3550 jitter, loss %, status-change **alert log** with unread badge, one-click **CSV export**.
@@ -40,6 +44,7 @@ Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp end
 - **Bandwidth** — per-interface live deltas via `GetIfTable2` (64-bit counters), top processes by connection share (explicitly labeled *estimated*).
 - **Warp Scanner** — WireGuard-style UDP probe + TCP fallback, ranking, copy-to-clipboard, one-click add to Ping Matrix.
 - **Port Scanner** — TCP sweep with port-list specs (`80,443,8000-8010`), open/closed/filtered states, service guesses.
+- **DNS Lookup** — raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server, with NXDOMAIN distinction and query-time display.
 - **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English).
 - **Resilient engine** — if the Rust `.dll`/`.so` isn't built, the app automatically uses the Dart fallback prober so the UI stays usable.
 
@@ -83,7 +88,7 @@ Linux/macOS: `cargo build --release` produces `libnetstudio_engine.so` / `.dylib
 ```
 ┌──────────── Flutter UI ────────────┐      ┌────────── Rust engine ──────────┐
 │ Ping Matrix · Traceroute           │ JSON │ Tokio probers (ICMP/TCP/TTL)    │
-│ Bandwidth · Warp · Portscan        │◄────►│ stats (RTT/jitter/loss)         │
+│ Bandwidth · Warp · Portscan · DNS  │◄────►│ stats (RTT/jitter/loss)         │
 │ SettingsController (theme+locale)  │  FFI │ traceroute / bandwidth / warp   │
 └────────────────────────────────────┘      └─────────────────────────────────┘
 ```
@@ -105,7 +110,7 @@ lib/
   models/ services/ state/       # incl. alert_log.dart (status-change history)
   views/
     main_shell_view.dart         # sidebar + IndexedStack tabs
-    ping_matrix/ traceroute/ bandwidth/ warp/ portscan/ settings/
+    ping_matrix/ traceroute/ bandwidth/ warp/ portscan/ dnslookup/ settings/
 native_engine/src/
   engine.rs ffi.rs stats.rs probe/ traceroute.rs bandwidth.rs warp.rs
 .github/workflows/              # ci.yml, release.yml
