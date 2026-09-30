@@ -1,7 +1,7 @@
 name: netstudio
 description: "Cross-Platform Network Studio - Advanced Network Monitoring and Analysis"
 publish_to: 'none'
-version: 1.1.0+1
+version: 1.2.0+1
 
 repository: https://github.com/Cadman021/VeloceNet-Studio
 homepage: https://github.com/Cadman021/VeloceNet-Studio

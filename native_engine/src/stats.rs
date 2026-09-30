@@ -127,11 +127,29 @@ impl TargetMetricTracker {
 
         let min_rtt = if self.min_rtt_ms == f64::MAX { 0.0 } else { self.min_rtt_ms };
 
+        // Windowed loss over the recent ring buffer (<= 40 samples). The
+        // lifetime `loss_rate` above is kept for totals, but status must
+        // react to the present: with lifetime accounting a host that was
+        // down for 10 minutes stays Degraded/Offline long after recovery.
+        let (windowed_loss_rate, window_samples) = if self.recent_rtts.is_empty() {
+            (0.0, 0)
+        } else {
+            let lost = self.recent_rtts.iter().filter(|v| **v < 0.0).count();
+            (
+                lost as f64 / self.recent_rtts.len() as f64 * 100.0,
+                self.recent_rtts.len(),
+            )
+        };
+
         let status = if self.sent_count == 0 {
             TargetStatus::Pending
-        } else if self.consecutive_failures >= 3 || loss_rate > 50.0 {
+        } else if self.consecutive_failures >= 3 || windowed_loss_rate > 50.0 {
             TargetStatus::Offline
-        } else if loss_rate > 5.0 || self.last_rtt_ms > 180.0 || self.jitter_ms > 30.0 {
+        } else if window_samples > 0
+            && (windowed_loss_rate > 5.0
+                || self.last_rtt_ms > 180.0
+                || self.jitter_ms > 30.0)
+        {
             TargetStatus::Degraded
         } else {
             TargetStatus::Online

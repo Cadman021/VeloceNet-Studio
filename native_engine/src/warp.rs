@@ -158,11 +158,26 @@ fn run_scan_worker(
 
     // Collect out-of-order, then keep results sorted by original index so
     // the UI list is stable; Dart sorts by RTT for ranking anyway.
+    // NOTE: progress is published incrementally inside the loop (previously
+    // it was written only here at the end, so polling UIs showed 0% until
+    // the whole scan finished). Arrival order during the scan, index order
+    // at completion — Dart re-sorts for ranking either way.
     let mut collected: Vec<(usize, WarpResult)> = Vec::new();
     for (idx, res) in rx {
-        collected.push((idx, res));
         if cancel_flag.load(Ordering::SeqCst) {
             break;
+        }
+        let ok = res.success;
+        collected.push((idx, res.clone()));
+        {
+            let mut p = progress.write();
+            p.tested = collected.len();
+            if ok {
+                p.succeeded += 1;
+            } else {
+                p.failed += 1;
+            }
+            p.results.push(res);
         }
     }
     for w in workers {
@@ -250,14 +265,25 @@ enum UdpOutcome {
     Timeout,
 }
 
+/// Builds a socket address without string round-tripping: `format!` +
+/// `parse` breaks on bare IPv6 (`::1:443` is ambiguous), while parsing the
+/// IP literal first handles both families explicitly.
+fn parse_target(ip: &str, port: u16) -> Option<SocketAddr> {
+    let parsed: std::net::IpAddr = ip.parse().ok()?;
+    Some(SocketAddr::new(parsed, port))
+}
+
 fn udp_probe(ip: &str, port: u16, timeout: Duration) -> UdpOutcome {
-    let addr: SocketAddr = match format!("{ip}:{port}").parse() {
-        Ok(a) => a,
-        Err(_) => return UdpOutcome::Timeout,
+    let addr = match parse_target(ip, port) {
+        Some(a) => a,
+        None => return UdpOutcome::Timeout,
     };
 
-    // Bind an ephemeral local UDP socket.
-    let sock = match UdpSocket::bind("0.0.0.0:0") {
+    // Bind an ephemeral local UDP socket matching the address family: an
+    // IPv4-bound socket cannot reach IPv6 destinations (and vice versa
+    // without dual-stack), which silently broke every IPv6 endpoint before.
+    let bind_addr = if addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+    let sock = match UdpSocket::bind(bind_addr) {
         Ok(s) => s,
         Err(_) => return UdpOutcome::Timeout,
     };
@@ -293,7 +319,15 @@ fn udp_probe(ip: &str, port: u16, timeout: Duration) -> UdpOutcome {
             UdpOutcome::Replied(start.elapsed().as_secs_f64() * 1000.0)
         }
         Ok(_) => UdpOutcome::Timeout,
-        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+        // Host answered with ICMP port-unreachable. NOTE: Windows reports
+        // this as WSAECONNRESET (ConnectionReset), POSIX as
+        // ECONNREFUSED (ConnectionRefused) — both mean "host is up, Warp
+        // UDP port is closed". Matching only one of them (as before) made
+        // the Refused branch dead on the other platform.
+        Err(e)
+            if e.kind() == std::io::ErrorKind::ConnectionRefused
+                || e.kind() == std::io::ErrorKind::ConnectionReset =>
+        {
             UdpOutcome::Refused(start.elapsed().as_secs_f64() * 1000.0)
         }
         Err(_) => UdpOutcome::Timeout,
@@ -301,7 +335,7 @@ fn udp_probe(ip: &str, port: u16, timeout: Duration) -> UdpOutcome {
 }
 
 fn tcp_probe(ip: &str, port: u16, timeout: Duration) -> Option<f64> {
-    let addr: SocketAddr = format!("{ip}:{port}").parse().ok()?;
+    let addr = parse_target(ip, port)?;
     let start = Instant::now();
     match std::net::TcpStream::connect_timeout(&addr, timeout) {
         Ok(s) => {
@@ -318,4 +352,27 @@ fn now_nanos() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_target_v4_v6_invalid() {
+        let v4 = parse_target("162.159.192.1", 443).expect("v4 parses");
+        assert!(!v4.ip().is_ipv6());
+        assert_eq!(v4.port(), 443);
+
+        // Bracket-stripped IPv6 (CSV layer removes brackets first).
+        let v6 = parse_target("::1", 443).expect("v6 parses");
+        assert!(v6.ip().is_ipv6());
+        assert_eq!(v6.port(), 443);
+
+        // The old `format!("{ip}:{port}").parse()` path returned these
+        // as Timeout; explicit IP parsing must not.
+        assert!(parse_target("2001:db8::1", 864).is_some());
+        assert!(parse_target("not-an-ip", 443).is_none());
+        assert!(parse_target("", 443).is_none());
+    }
 }

@@ -110,7 +110,11 @@ class TracerouteController extends ChangeNotifier {
     );
     notifyListeners();
 
-    if (_bindings.isTracerouteReady) {
+    // Native ICMP tracing exists on Windows only: elsewhere the bindings
+    // are present but the worker can only emit timeouts (IPv4-only resolve
+    // + a stub prober), so the system `traceroute` binary is the honest
+    // path on Linux/macOS.
+    if (Platform.isWindows && _bindings.isTracerouteReady) {
       _startNativeTraceroute(host, maxHops, timeoutMs);
     } else {
       _startFallbackTraceroute(host, maxHops, timeoutMs);
@@ -210,22 +214,35 @@ class TracerouteController extends ChangeNotifier {
     }
     _fallbackProcess = proc;
 
+    // NOTE: `tracert`/`traceroute` print in the console OEM codepage
+    // (e.g. cp866/cp936 on Russian/Chinese Windows), NOT UTF-8. A strict
+    // decoder throws FormatException on the first non-UTF8 byte and — with
+    // no onError handler — the error escapes into the zone and kills the
+    // app. Lenient decoding keeps the trace alive (mojibake in the worst
+    // case, which the IP/RTT regexes skip over).
     _fallbackSub = proc.stdout
-        .transform(utf8.decoder)
+        .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
-        .listen((line) {
-      if (runId != _runId) return; // stale output from a killed run
-      final parsedHop = _parseTracertLine(line);
-      if (parsedHop != null) {
-        collectedHops.removeWhere((h) => h.hopNum == parsedHop.hopNum);
-        collectedHops.add(parsedHop);
-        _progress = _progress.copyWith(
-          currentHop: parsedHop.hopNum,
-          hops: List.from(collectedHops),
-        );
-        notifyListeners();
-      }
-    });
+        .listen(
+      (line) {
+        if (runId != _runId) return; // stale output from a killed run
+        final parsedHop = _parseTracertLine(line);
+        if (parsedHop != null) {
+          collectedHops.removeWhere((h) => h.hopNum == parsedHop.hopNum);
+          collectedHops.add(parsedHop);
+          _progress = _progress.copyWith(
+            currentHop: parsedHop.hopNum,
+            hops: List.from(collectedHops),
+          );
+          notifyListeners();
+        }
+      },
+      onError: (_) {
+        // Decoding/pipe hiccup mid-trace: keep previously collected hops.
+        debugPrint('Traceroute stdout error; keeping partial hops.');
+      },
+      cancelOnError: false,
+    );
 
     proc.exitCode.then((code) {
       if (runId != _runId) return; // stopped or superseded; leave state alone

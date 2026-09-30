@@ -67,8 +67,7 @@ class _DnslookupScreenState extends State<DnslookupScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(AppStrings.of(context).get('invalidServer')),
-          backgroundColor: context.surfaceColor,
-        ),
+                  ),
       );
     }
     return ok;
@@ -613,8 +612,7 @@ class _DnslookupScreenState extends State<DnslookupScreen> {
                     content:
                         Text('${r.data} ${strings.get('copied')}'),
                     duration: const Duration(seconds: 1),
-                    backgroundColor: context.surfaceColor,
-                  ),
+                                      ),
                 );
               },
             ),
@@ -662,8 +660,7 @@ class _DnslookupScreenState extends State<DnslookupScreen> {
       SnackBar(
         content: Text('${records.length} ${strings.get('copied')}'),
         duration: const Duration(seconds: 1),
-        backgroundColor: context.surfaceColor,
-      ),
+              ),
     );
   }
 }

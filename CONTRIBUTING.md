@@ -2,6 +2,9 @@
 
 Thanks for your interest! This project is GPL-3.0 licensed — by contributing you agree your changes will be distributed under the same license.
 
+Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md). Found a
+security issue? See [SECURITY.md](SECURITY.md) — do not file it publicly.
+
 ## Quick start
 
 Prerequisites: Flutter SDK ≥ 3.22, Rust stable (`rustup`), Windows 10/11 x64 for full native features.
@@ -24,13 +27,13 @@ cargo test --release
 cargo clippy --release -- -D warnings
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly these checks on Windows. Keep them green.
+CI (`.github/workflows/ci.yml`) runs exactly these checks on Windows **and** Ubuntu (the Linux job compiles the `#[cfg(not(windows))]` paths — keep both green).
 
 ## Project conventions
 
 - **i18n:** user-visible strings go through `AppStrings` (`lib/core/i18n/app_strings.dart`) with both `en` and `fa` entries. No hardcoded Persian/English in widgets.
 - **Theming:** never use `AppColors.surface/background/text*` directly in new UI — use the `ThemeX` context extension (`lib/core/theme/theme_x.dart`) so Light/Dark/System keeps working.
-- **FFI safety:** validate every string crossing FFI in `NativeBindings` (host regex, port `1–65535`, clamped intervals). Never load DLLs from cwd/`PATH` — see `native_library.dart`.
+- **FFI safety:** validate every string crossing FFI in `NativeBindings` (host regex, port `1–65535`, clamped intervals). Never load DLLs from cwd/`PATH` in release builds — see `native_library.dart`. Every new `extern "C"` entry point must run inside the `ffi_guard` (`catch_unwind`) wrapper in `native_engine/src/ffi.rs` — panics must never reach Dart frames (release profile is `panic = "unwind"` for exactly this reason).
 - **Rust:** no `unwrap()` on hot paths crossing FFI; cap unbounded inputs (CSV sizes, endpoint counts); abort spawned probe tasks when targets/sessions are removed.
 - **Commits:** short imperative subject (`Add warp empty-state string`), reference issues (`Fixes #12`). One logical change per commit.
 - **PRs:** describe what/why, include screenshots for UI changes (Light + Dark if themed), confirm the checklist above. Small PRs get reviewed faster.

@@ -368,8 +368,7 @@ class _ExportFileButtonState extends State<_ExportFileButton> {
               ),
             ],
           ),
-          backgroundColor: context.surfaceColor,
-          duration: const Duration(seconds: 4),
+                    duration: const Duration(seconds: 4),
           action: SnackBarAction(
             label: strings.get('copyPath'),
             onPressed: () {
@@ -391,8 +390,7 @@ class _ExportFileButtonState extends State<_ExportFileButton> {
               Expanded(child: Text(strings.get('exportFailed'))),
             ],
           ),
-          backgroundColor: context.surfaceColor,
-        ),
+                  ),
       );
     } finally {
       if (mounted) setState(() => _exporting = false);
@@ -445,8 +443,7 @@ Future<void> _exportTargetsFile(
             ),
           ],
         ),
-        backgroundColor: context.surfaceColor,
-        duration: const Duration(seconds: 4),
+                duration: const Duration(seconds: 4),
         action: SnackBarAction(
           label: strings.get('copyPath'),
           onPressed: () {
@@ -461,8 +458,7 @@ Future<void> _exportTargetsFile(
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(strings.get('exportFailed')),
-        backgroundColor: context.surfaceColor,
-      ),
+              ),
     );
   }
 }

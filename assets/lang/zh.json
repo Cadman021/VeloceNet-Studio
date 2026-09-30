@@ -222,5 +222,6 @@
   "skippedCount": "已跳过",
   "invalidImport": "备份内容无效",
   "targetsSaved": "服务器备份已保存",
-  "paste": "粘贴"
+  "paste": "粘贴",
+  "invalidHost": "请输入有效的 IP 地址或主机名"
 }

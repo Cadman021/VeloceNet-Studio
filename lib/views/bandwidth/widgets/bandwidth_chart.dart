@@ -147,6 +147,20 @@ class _BandwidthPainter extends CustomPainter {
     peak.paint(canvas, Offset(size.width - peak.width - 4, 2));
   }
 
+  // Same contract as the ping sparkline: repaint only when length or
+  // the window edges moved (append-only history, newest last).
   @override
-  bool shouldRepaint(covariant _BandwidthPainter old) => true;
+  bool shouldRepaint(covariant _BandwidthPainter old) {
+    if (identical(history, old.history)) return false;
+    if (history.length != old.history.length) return true;
+    if (history.isEmpty) return false;
+    final a = history.first;
+    final b = old.history.first;
+    final c = history.last;
+    final d = old.history.last;
+    return a.downBps != b.downBps ||
+        a.upBps != b.upBps ||
+        c.downBps != d.downBps ||
+        c.upBps != d.upBps;
+  }
 }

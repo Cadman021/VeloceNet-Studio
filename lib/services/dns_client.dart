@@ -300,9 +300,15 @@ Future<DnsResponse> lookupDns({
   final packet = built.$1;
   final txid = built.$2;
 
+  // Family-matched bind: an IPv4-bound socket can never receive an IPv6
+  // server's reply (and vice versa without dual-stack), which made every
+  // custom IPv6 server silently time out.
+  final bindAddr = server.type == InternetAddressType.IPv6
+      ? InternetAddress.anyIPv6
+      : InternetAddress.anyIPv4;
   RawDatagramSocket? sock;
   try {
-    sock = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0)
+    sock = await RawDatagramSocket.bind(bindAddr, 0)
         .timeout(Duration(milliseconds: timeoutMs));
   } on TimeoutException {
     throw const DnsException('Socket bind timed out');
@@ -323,22 +329,49 @@ Future<DnsResponse> lookupDns({
     }
   });
   sub = socket.listen(
-    (event) {
+    (event) async {
       if (event != RawSocketEvent.read || completer.isCompleted) return;
       Datagram? dg;
       while ((dg = socket.receive()) != null && !completer.isCompleted) {
-        final data = dg!.data;
+        // Source check: only the queried server may answer (spoofed or
+        // stray packets are ignored instead of decoded).
+        if (dg!.address.address != server.address) continue;
+        final data = dg.data;
         bool truncated = false;
         try {
           final answers = decodeDnsResponse(data, txid,
               onFlags: (tc) => truncated = tc);
           stopwatch.stop();
-          completer.complete(DnsResponse(
-            server: serverIp,
-            answers: answers,
-            queryTimeMs: (stopwatch.elapsedMicroseconds / 1000).round(),
-            truncated: truncated,
-          ));
+          if (truncated) {
+            // UDP answer didn't fit: retry the same query over TCP
+            // (RFC 1035 §4.2.2). If TCP also fails, fall back to the
+            // partial UDP answers with the flag set.
+            try {
+              final tcp = await _lookupDnsTcp(
+                name: name,
+                qtype: qtype,
+                serverIp: serverIp,
+                port: port,
+                timeoutMs: timeoutMs,
+              );
+              completer.complete(tcp);
+            } catch (_) {
+              completer.complete(DnsResponse(
+                server: serverIp,
+                answers: answers,
+                queryTimeMs:
+                    (stopwatch.elapsedMicroseconds / 1000).round(),
+                truncated: true,
+              ));
+            }
+          } else {
+            completer.complete(DnsResponse(
+              server: serverIp,
+              answers: answers,
+              queryTimeMs: (stopwatch.elapsedMicroseconds / 1000).round(),
+              truncated: false,
+            ));
+          }
           return;
         } on DnsException catch (e) {
           // Someone else's packet: keep waiting for ours.
@@ -360,6 +393,83 @@ Future<DnsResponse> lookupDns({
     timer.cancel();
     await sub.cancel();
     socket.close();
+    stopwatch.stop();
+  }
+}
+
+/// Same query over TCP (RFC 1035 §4.2.2 framing: 2-byte length prefix).
+/// Used as fallback when a UDP reply arrives with the TC flag.
+Future<DnsResponse> _lookupDnsTcp({
+  required String name,
+  required DnsQueryType qtype,
+  required String serverIp,
+  required int port,
+  required int timeoutMs,
+}) async {
+  final built = buildDnsQuery(name, qtype.code);
+  final packet = built.$1;
+  final txid = built.$2;
+  final server = InternetAddress(serverIp);
+  final stopwatch = Stopwatch()..start();
+
+  Socket? sock;
+  try {
+    sock = await Socket.connect(
+      server,
+      port,
+      timeout: Duration(milliseconds: timeoutMs),
+    );
+  } catch (_) {
+    throw const DnsException('TCP fallback connect failed');
+  }
+  final socket = sock;
+  final completer = Completer<List<int>>.sync();
+  final buf = <int>[];
+  int? need;
+  late StreamSubscription<List<int>> sub;
+  final timer = Timer(Duration(milliseconds: timeoutMs), () {
+    if (!completer.isCompleted) {
+      completer.completeError(
+        TimeoutException('DNS/TCP read from $serverIp timed out'),
+      );
+    }
+  });
+  sub = socket.listen(
+    (chunk) {
+      if (completer.isCompleted) return;
+      buf.addAll(chunk);
+      if (need == null && buf.length >= 2) {
+        need = ((buf[0] << 8) | buf[1]) + 2;
+      }
+      if (need != null && buf.length >= need!) {
+        completer.complete(buf.sublist(2, need));
+      }
+    },
+    onError: (Object e) {
+      if (!completer.isCompleted) completer.completeError(e);
+    },
+    onDone: () {
+      if (!completer.isCompleted) {
+        completer.completeError(const DnsException('TCP closed early'));
+      }
+    },
+    cancelOnError: false,
+  );
+  try {
+    socket.add([packet.length >> 8, packet.length & 0xFF, ...packet]);
+    final body = await completer.future;
+    stopwatch.stop();
+    final answers = decodeDnsResponse(body, txid);
+    return DnsResponse(
+      server: serverIp,
+      answers: answers,
+      queryTimeMs: (stopwatch.elapsedMicroseconds / 1000).round(),
+      truncated: false,
+    );
+  } finally {
+    timer.cancel();
+    await sub.cancel();
+    socket.destroy();
     stopwatch.stop();
   }
 }

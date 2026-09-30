@@ -222,5 +222,6 @@
   "skippedCount": "Skipped",
   "invalidImport": "Invalid backup content",
   "targetsSaved": "Servers backup saved",
-  "paste": "Paste"
+  "paste": "Paste",
+  "invalidHost": "Enter a valid IP address or hostname"
 }

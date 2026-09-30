@@ -7,8 +7,42 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- DNS Lookup tab: raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server IP, with NXDOMAIN distinction, query-time display and zone-copy. Fully localized (en/fa/ru/zh) and theme-aware.
+- Nothing yet — see `main` for work toward the next release.
+
+## [1.2.0] — 2026-09-30
+
+### Added
 - Server backup: versioned JSON export of the target list plus paste-to-import with hardened validation (bad hosts/ports skipped, ids reassigned collision-free, 500-entry cap). Import/export lives in the matrix toolbar menu.
+- Community health files: `CODE_OF_CONDUCT.md` (Contributor Covenant), `SECURITY.md` (supported versions + private reporting), and a PR template wired to this repo's checklist.
+- Heatmap accessibility (thanks @ayanesato, PR #8): localized LOSS badge plus screen-reader labels in all four locales, with widget/semantics tests.
+
+### Fixed
+- Windows ICMP targets no longer silently fall back to TCP on failure (mixed fake stats, doubled timeouts); the TCP fallback now runs only where native ICMP is unavailable (non-Windows).
+- Warp UDP reachability detection now treats Windows `ConnectionReset` (WSAECONNRESET) like POSIX `ConnectionRefused` — the refused branch was previously dead on Windows.
+- Sub-millisecond RTT reports the measured wall-clock time instead of a fabricated `0.5` constant (ping and traceroute paths).
+- Removed the dead `netstudio_quick_ping` FFI (no call sites; it also owned the only `expect()` in the engine and blocked the calling thread).
+- FFI resilience: release profile switched from `panic = "abort"` to `"unwind"` and every `extern "C"` entry point runs inside a `catch_unwind` guard — an engine-internal bug now degrades to an error return instead of killing (or UB-unwinding into) the host process.
+- Probe scheduling no longer drifts: per-target loops tick on a fixed `tokio::time::interval` with `MissedTickBehavior::Skip` instead of `sleep(period)` after each probe.
+- Dart fallback prober: overlapping 800ms ticks no longer double-count sockets and corrupt histories (reentrancy guard); offline status now needs 3 *consecutive* failures instead of 3 lifetime losses ever.
+- Port scanner: `Socket.connect` timeouts surface as `SocketException`, so the old `TimeoutException` branch was dead and everything showed "closed" — timeout vs refused is now distinguished by OS error code + message; DNS resolves once per scan instead of per port.
+- Warp fallback: generation counter kills the stale-loop-overwrites-new-run race; scans over the 4096 endpoint cap are refused with an error instead of firing ~22k fallback sockets; the header badge now shows the actual path in use.
+- Traceroute uses the native engine on Windows only; Linux/macOS go straight to the system `traceroute` binary (native bindings exist there but can only emit timeouts).
+- Traceroute output decodes leniently (`allowMalformed` + stream `onError`) so non-UTF8 console codepages (e.g. cp866/cp936) can't crash the app via an unhandled `FormatException`.
+- Sidebar footer is capability-honest on non-Windows ("TCP mode").
+- DLL loader: cwd-anchored dev paths are now debug-only (`kDebugMode`); release builds load exclusively from the executable directory, matching the documented policy.
+- Add-Server dialog validates hosts with the same normalizer the engines use (URLs normalize, bad hosts fail in the form) and uses millisecond ids so same-second double adds can't collide.
+- DNS hardening: family-matched socket bind (custom IPv6 servers work), source-address check against spoofed replies, and automatic TCP retry on truncated (TC) responses per RFC 1035 §4.2.2.
+- CSV hardening: formula-injection neutralization (leading `=+-@` cells are text-marked) and empty timestamps for never-checked targets instead of 1970.
+- Metrics decode moved from per-tick `compute()` spawns to one persistent worker isolate (with inline fallback), killing 500ms spawn overhead and GC churn.
+- Sparkline and bandwidth chart repaint only when the visible shape can differ instead of every frame.
+- Target status now follows windowed loss over the recent 40-sample ring (a host down for 10 minutes recovers promptly after reconnecting) while lifetime counters stay intact for totals.
+- Native traceroute probes each TTL 3× and averages successful samples, matching the system `tracert` behavior instead of letting one slow router define the hop.
+- Non-Windows lints fixed (`c_void`/`size_of` imports gated to Windows, unused `host` renamed in the ICMP stub) and CI gained an Ubuntu clippy+test job so the `#[cfg(not(windows))]` paths can never rot silently again.
+- Warp scans now publish live progress (tested/succeeded/failed counts plus incremental results) instead of staying at 0% until completion.
+- Warp endpoints resolve via explicit IP parsing with family-matched socket binding — IPv6 targets (e.g. `[::1]:443`) actually work now instead of timing out; bare unbracketed IPv6 stays rejected (port ambiguity).
+
+### Added
+- DNS Lookup tab: raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server IP, with NXDOMAIN distinction, query-time display and zone-copy. Fully localized (en/fa/ru/zh) and theme-aware.
 
 ## [1.1.0] — 2026-09-24
 
@@ -57,6 +91,7 @@ First public release.
 - Native metrics polling interval 200 ms → 500 ms (less UI-thread JSON pressure); `print` → `debugPrint` in the engine service.
 - Rank medals (🥇🥈🥉) replaced with text ranks (`#1`, `#2`, …) for font/i18n safety.
 
-[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.0.0

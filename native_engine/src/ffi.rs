@@ -1,11 +1,11 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use crate::bandwidth::BandwidthMonitor;
 use crate::engine::{Engine, TargetConfig};
-use crate::probe::{execute_probe, ProbeProtocol};
+use crate::probe::ProbeProtocol;
 use crate::traceroute::TracerouteManager;
 use crate::warp::WarpManager;
 
@@ -27,28 +27,27 @@ fn get_warp_manager() -> &'static WarpManager {
     WARP_MANAGER.get_or_init(WarpManager::new)
 }
 
-/// Shared runtime for one-shot `quick_ping` calls. Creating a new Tokio
-/// runtime per call costs milliseconds and leaks threads under load.
-static QUICK_RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
-fn get_quick_runtime() -> Option<&'static tokio::runtime::Runtime> {
-    QUICK_RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .thread_name("netstudio-quick-ping")
-            .build()
-            .expect("quick-ping runtime")
-    });
-    QUICK_RT.get()
+/// Runs `f` at the FFI boundary, converting a Rust panic into the caller's
+/// error default instead of letting it unwind into Dart frames (undefined
+/// behavior) or abort the whole host process.
+///
+/// Requires `panic = "unwind"` in the release profile: with `abort`,
+/// `catch_unwind` cannot intercept. All `extern "C"` entry points below go
+/// through this guard; internal worker threads already isolate failures
+/// per-task via Tokio/`JoinHandle` and session cancel flags.
+fn ffi_guard<T>(default: T, f: impl FnOnce() -> T) -> T {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(v) => v,
+        Err(_) => default,
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn netstudio_engine_new() -> *mut Engine {
-    match Engine::new() {
+    ffi_guard(std::ptr::null_mut(), || match Engine::new() {
         Ok(engine) => Box::into_raw(Box::new(engine)),
         Err(_) => std::ptr::null_mut(),
-    }
+    })
 }
 
 /// Frees an engine previously returned by [`netstudio_engine_new`].
@@ -58,9 +57,11 @@ pub extern "C" fn netstudio_engine_new() -> *mut Engine {
 /// has not been freed before. Null pointers are ignored.
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_engine_free(engine: *mut Engine) {
-    if !engine.is_null() {
-        drop(Box::from_raw(engine));
-    }
+    ffi_guard((), || {
+        if !engine.is_null() {
+            drop(Box::from_raw(engine));
+        }
+    })
 }
 
 /// Adds a probe target to the engine.
@@ -79,35 +80,37 @@ pub unsafe extern "C" fn netstudio_add_target(
     interval_ms: u64,
     timeout_ms: u64,
 ) -> bool {
-    if engine.is_null() || name.is_null() || host.is_null() {
-        return false;
-    }
+    ffi_guard(false, || {
+        if engine.is_null() || name.is_null() || host.is_null() {
+            return false;
+        }
 
-    let name_str = match CStr::from_ptr(name).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => return false,
-    };
+        let name_str = match CStr::from_ptr(name).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return false,
+        };
 
-    let host_str = match CStr::from_ptr(host).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => return false,
-    };
+        let host_str = match CStr::from_ptr(host).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return false,
+        };
 
-    if name_str.len() > 128 || host_str.is_empty() || host_str.len() > 253 || port == 0 {
-        return false;
-    }
-    let config = TargetConfig {
-        id,
-        name: name_str,
-        host: host_str,
-        port,
-        protocol: ProbeProtocol::from_u32(protocol),
-        interval_ms: interval_ms.clamp(200, 60000),
-        timeout_ms: timeout_ms.clamp(100, 10000),
-    };
+        if name_str.len() > 128 || host_str.is_empty() || host_str.len() > 253 || port == 0 {
+            return false;
+        }
+        let config = TargetConfig {
+            id,
+            name: name_str,
+            host: host_str,
+            port,
+            protocol: ProbeProtocol::from_u32(protocol),
+            interval_ms: interval_ms.clamp(200, 60000),
+            timeout_ms: timeout_ms.clamp(100, 10000),
+        };
 
-    (*engine).add_target(config);
-    true
+        (*engine).add_target(config);
+        true
+    })
 }
 
 /// Removes a probe target (and aborts its probe loop).
@@ -116,11 +119,13 @@ pub unsafe extern "C" fn netstudio_add_target(
 /// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_remove_target(engine: *mut Engine, id: u32) -> bool {
-    if engine.is_null() {
-        return false;
-    }
-    (*engine).remove_target(id);
-    true
+    ffi_guard(false, || {
+        if engine.is_null() {
+            return false;
+        }
+        (*engine).remove_target(id);
+        true
+    })
 }
 
 /// Starts all probe loops.
@@ -129,11 +134,13 @@ pub unsafe extern "C" fn netstudio_remove_target(engine: *mut Engine, id: u32) -
 /// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_start(engine: *mut Engine) -> bool {
-    if engine.is_null() {
-        return false;
-    }
-    (*engine).start();
-    true
+    ffi_guard(false, || {
+        if engine.is_null() {
+            return false;
+        }
+        (*engine).start();
+        true
+    })
 }
 
 /// Stops all probe loops and aborts their tasks.
@@ -142,11 +149,13 @@ pub unsafe extern "C" fn netstudio_start(engine: *mut Engine) -> bool {
 /// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_stop(engine: *mut Engine) -> bool {
-    if engine.is_null() {
-        return false;
-    }
-    (*engine).stop();
-    true
+    ffi_guard(false, || {
+        if engine.is_null() {
+            return false;
+        }
+        (*engine).stop();
+        true
+    })
 }
 
 /// Returns whether the engine is currently running.
@@ -155,10 +164,12 @@ pub unsafe extern "C" fn netstudio_stop(engine: *mut Engine) -> bool {
 /// `engine` must be a live pointer from [`netstudio_engine_new`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_is_running(engine: *mut Engine) -> bool {
-    if engine.is_null() {
-        return false;
-    }
-    (*engine).is_running()
+    ffi_guard(false, || {
+        if engine.is_null() {
+            return false;
+        }
+        (*engine).is_running()
+    })
 }
 
 /// Returns a JSON snapshot of all targets; free with [`netstudio_free_string`].
@@ -168,15 +179,17 @@ pub unsafe extern "C" fn netstudio_is_running(engine: *mut Engine) -> bool {
 /// returned pointer must be freed exactly once via [`netstudio_free_string`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_get_metrics_json(engine: *mut Engine) -> *mut c_char {
-    if engine.is_null() {
-        return std::ptr::null_mut();
-    }
+    ffi_guard(std::ptr::null_mut(), || {
+        if engine.is_null() {
+            return std::ptr::null_mut();
+        }
 
-    let json_str = (*engine).get_metrics_json();
-    match CString::new(json_str) {
-        Ok(c_string) => c_string.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+        let json_str = (*engine).get_metrics_json();
+        match CString::new(json_str) {
+            Ok(c_string) => c_string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// Frees a string previously returned by this library.
@@ -186,46 +199,11 @@ pub unsafe extern "C" fn netstudio_get_metrics_json(engine: *mut Engine) -> *mut
 /// been freed before. Null pointers are ignored.
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_free_string(s: *mut c_char) {
-    if !s.is_null() {
-        drop(CString::from_raw(s));
-    }
-}
-
-/// One-shot probe; returns RTT in ms or `-1.0` on failure.
-///
-/// # Safety
-/// `host` must point to a valid NUL-terminated UTF-8 C string (or be null,
-/// which yields `-1.0`).
-#[no_mangle]
-pub unsafe extern "C" fn netstudio_quick_ping(
-    host: *const c_char,
-    port: u16,
-    protocol: u32,
-    timeout_ms: u32,
-) -> f64 {
-    if host.is_null() {
-        return -1.0;
-    }
-
-    let host_str = match CStr::from_ptr(host).to_str() {
-        Ok(s) => s,
-        Err(_) => return -1.0,
-    };
-
-    let proto = ProbeProtocol::from_u32(protocol);
-    let dur = Duration::from_millis((timeout_ms as u64).clamp(100, 10000));
-
-    let rt = match get_quick_runtime() {
-        Some(r) => r,
-        None => return -1.0,
-    };
-
-    let result = rt.block_on(execute_probe(proto, host_str, port, dur));
-    if result.success {
-        result.rtt_ms
-    } else {
-        -1.0
-    }
+    ffi_guard((), || {
+        if !s.is_null() {
+            drop(CString::from_raw(s));
+        }
+    })
 }
 
 /// Starts a traceroute session; returns a session id (`0` = failure).
@@ -239,16 +217,18 @@ pub unsafe extern "C" fn netstudio_traceroute_start(
     max_hops: u8,
     timeout_ms: u32,
 ) -> u32 {
-    if host.is_null() {
-        return 0;
-    }
+    ffi_guard(0, || {
+        if host.is_null() {
+            return 0;
+        }
 
-    let host_str = match CStr::from_ptr(host).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => return 0,
-    };
+        let host_str = match CStr::from_ptr(host).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return 0,
+        };
 
-    get_traceroute_manager().start_traceroute(host_str, max_hops, timeout_ms)
+        get_traceroute_manager().start_traceroute(host_str, max_hops, timeout_ms)
+    })
 }
 
 /// Polls traceroute progress as JSON; free with [`netstudio_free_string`].
@@ -258,18 +238,20 @@ pub unsafe extern "C" fn netstudio_traceroute_start(
 /// be freed exactly once via [`netstudio_free_string`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_traceroute_poll(session_id: u32) -> *mut c_char {
-    if session_id == 0 {
-        return std::ptr::null_mut();
-    }
-
-    if let Some(json) = get_traceroute_manager().poll_progress_json(session_id) {
-        match CString::new(json) {
-            Ok(c_str) => c_str.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+    ffi_guard(std::ptr::null_mut(), || {
+        if session_id == 0 {
+            return std::ptr::null_mut();
         }
-    } else {
-        std::ptr::null_mut()
-    }
+
+        if let Some(json) = get_traceroute_manager().poll_progress_json(session_id) {
+            match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        } else {
+            std::ptr::null_mut()
+        }
+    })
 }
 
 /// Requests cancellation of a traceroute session.
@@ -278,11 +260,13 @@ pub unsafe extern "C" fn netstudio_traceroute_poll(session_id: u32) -> *mut c_ch
 /// Any `u32` is accepted (unknown ids simply return `false`).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_traceroute_stop(session_id: u32) -> bool {
-    if session_id == 0 {
-        return false;
-    }
+    ffi_guard(false, || {
+        if session_id == 0 {
+            return false;
+        }
 
-    get_traceroute_manager().stop_traceroute(session_id)
+        get_traceroute_manager().stop_traceroute(session_id)
+    })
 }
 
 /// Frees a traceroute session.
@@ -291,35 +275,43 @@ pub unsafe extern "C" fn netstudio_traceroute_stop(session_id: u32) -> bool {
 /// Any `u32` is accepted (unknown ids are ignored).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_traceroute_free(session_id: u32) {
-    if session_id != 0 {
-        get_traceroute_manager().free_session(session_id);
-    }
+    ffi_guard((), || {
+        if session_id != 0 {
+            get_traceroute_manager().free_session(session_id);
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn netstudio_bandwidth_start(interval_ms: u32) -> bool {
-    get_bandwidth_monitor().start(interval_ms.into());
-    true
+    ffi_guard(false, || {
+        get_bandwidth_monitor().start(interval_ms.into());
+        true
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn netstudio_bandwidth_stop() -> bool {
-    get_bandwidth_monitor().stop();
-    true
+    ffi_guard(false, || {
+        get_bandwidth_monitor().stop();
+        true
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn netstudio_bandwidth_poll() -> *mut c_char {
-    let json = get_bandwidth_monitor().snapshot_json();
-    match CString::new(json) {
-        Ok(c_str) => c_str.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard(std::ptr::null_mut(), || {
+        let json = get_bandwidth_monitor().snapshot_json();
+        match CString::new(json) {
+            Ok(c_str) => c_str.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn netstudio_bandwidth_is_running() -> bool {
-    get_bandwidth_monitor().is_running()
+    ffi_guard(false, || get_bandwidth_monitor().is_running())
 }
 
 /// Starts a warp scan over an `ip:port,...` CSV; returns a session id (`0` = failure).
@@ -333,13 +325,14 @@ pub unsafe extern "C" fn netstudio_warp_start(
     parallel: u32,
     timeout_ms: u32,
 ) -> u32 {
-    if endpoints_csv.is_null() {
-        return 0;
-    }
-    let csv = match CStr::from_ptr(endpoints_csv).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
+    ffi_guard(0, || {
+        if endpoints_csv.is_null() {
+            return 0;
+        }
+        let csv = match CStr::from_ptr(endpoints_csv).to_str() {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
     // Format: "ip:port,ip:port,..." — expansion (ranges) happens in Dart.
     // Hard caps: 256KB input, 4096 endpoints max to avoid OOM.
     if csv.len() > 256 * 1024 {
@@ -379,6 +372,7 @@ pub unsafe extern "C" fn netstudio_warp_start(
         return 0;
     }
     get_warp_manager().start_scan(endpoints, parallel, timeout_ms)
+    })
 }
 
 /// Polls warp scan progress as JSON; free with [`netstudio_free_string`].
@@ -388,17 +382,19 @@ pub unsafe extern "C" fn netstudio_warp_start(
 /// be freed exactly once via [`netstudio_free_string`].
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_warp_poll(session_id: u32) -> *mut c_char {
-    if session_id == 0 {
-        return std::ptr::null_mut();
-    }
-    if let Some(json) = get_warp_manager().poll_progress_json(session_id) {
-        match CString::new(json) {
-            Ok(c_str) => c_str.into_raw(),
-            Err(_) => std::ptr::null_mut(),
+    ffi_guard(std::ptr::null_mut(), || {
+        if session_id == 0 {
+            return std::ptr::null_mut();
         }
-    } else {
-        std::ptr::null_mut()
-    }
+        if let Some(json) = get_warp_manager().poll_progress_json(session_id) {
+            match CString::new(json) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        } else {
+            std::ptr::null_mut()
+        }
+    })
 }
 
 /// Requests cancellation of a warp scan session.
@@ -407,10 +403,12 @@ pub unsafe extern "C" fn netstudio_warp_poll(session_id: u32) -> *mut c_char {
 /// Any `u32` is accepted (unknown ids simply return `false`).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_warp_stop(session_id: u32) -> bool {
-    if session_id == 0 {
-        return false;
-    }
-    get_warp_manager().stop_scan(session_id)
+    ffi_guard(false, || {
+        if session_id == 0 {
+            return false;
+        }
+        get_warp_manager().stop_scan(session_id)
+    })
 }
 
 /// Frees a warp scan session.
@@ -419,7 +417,9 @@ pub unsafe extern "C" fn netstudio_warp_stop(session_id: u32) -> bool {
 /// Any `u32` is accepted (unknown ids are ignored).
 #[no_mangle]
 pub unsafe extern "C" fn netstudio_warp_free(session_id: u32) {
-    if session_id != 0 {
-        get_warp_manager().free_session(session_id);
-    }
+    ffi_guard((), || {
+        if session_id != 0 {
+            get_warp_manager().free_session(session_id);
+        }
+    })
 }

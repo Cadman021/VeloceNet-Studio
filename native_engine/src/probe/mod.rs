@@ -45,12 +45,18 @@ pub async fn execute_probe(
 
             match res {
                 Ok(probe_result) => {
-                    // If ICMP failed due to platform or raw socket, fallback to TCP on port if port > 0
+                    // NOTE: no silent ICMP→TCP fallback on Windows. Iphlpapi
+                    // ICMP works without admin rights there, so a failure is
+                    // genuine and must be reported as such — mixing TCP RTT
+                    // into ICMP stats corrupts loss/RTT accounting and can
+                    // double the effective timeout. The fallback survives
+                    // only where native ICMP is unavailable (non-Windows
+                    // stub always fails; TCP is the only signal there).
+                    #[cfg(not(windows))]
                     if !probe_result.success && port > 0 {
-                        probe_tcp(host, port, timeout_duration).await
-                    } else {
-                        probe_result
+                        return probe_tcp(host, port, timeout_duration).await;
                     }
+                    probe_result
                 }
                 Err(e) => ProbeResult {
                     success: false,

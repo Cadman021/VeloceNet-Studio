@@ -124,15 +124,18 @@ class _WarpScreenState extends State<WarpScreen> {
                   width: 7,
                   height: 7,
                   decoration: BoxDecoration(
-                    color: c.isNativeAvailable ? AppColors.latencyFast : AppColors.latencyModerate,
+                    // Actual path in use, not mere availability: a native-capable
+                    // build still falls back to Dart when the engine rejects
+                    // the scan (e.g. over the endpoint cap).
+                    color: c.isUsingNative ? AppColors.latencyFast : AppColors.latencyModerate,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  c.isNativeAvailable ? strings.get('nativeRustUdp') : strings.get('dartFallbackTcp'),
+                  c.isUsingNative ? strings.get('nativeRustUdp') : strings.get('dartFallbackTcp'),
                   style: TextStyle(
-                    color: c.isNativeAvailable ? AppColors.latencyFast : AppColors.latencyModerate,
+                    color: c.isUsingNative ? AppColors.latencyFast : AppColors.latencyModerate,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
@@ -548,7 +551,7 @@ class _WarpScreenState extends State<WarpScreen> {
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: r.endpoint));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('${r.endpoint} ${strings.get('copied')}'), duration: const Duration(seconds: 1), backgroundColor: context.surfaceColor),
+                      SnackBar(content: Text('${r.endpoint} ${strings.get('copied')}'), duration: const Duration(seconds: 1)),
                     );
                   },
                 ),
@@ -576,7 +579,7 @@ class _WarpScreenState extends State<WarpScreen> {
     final ok = sorted.where((r) => r.success).take(_topN()).toList();
     if (ok.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(strings.get('noOkToCopy')), backgroundColor: context.surfaceColor),
+        SnackBar(content: Text(strings.get('noOkToCopy'))),
       );
       return;
     }
@@ -585,7 +588,7 @@ class _WarpScreenState extends State<WarpScreen> {
     ];
     Clipboard.setData(ClipboardData(text: lines.join('\n')));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${ok.length} ${strings.get('topCopied')}'), backgroundColor: context.surfaceColor),
+      SnackBar(content: Text('${ok.length} ${strings.get('topCopied')}')),
     );
   }
 
@@ -599,7 +602,7 @@ class _WarpScreenState extends State<WarpScreen> {
         {'ip': ranked[i].ip, 'port': ranked[i].port, 'rank': i + 1},
     ]);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$n ${strings.get('topAdded')}'), backgroundColor: context.surfaceColor),
+      SnackBar(content: Text('$n ${strings.get('topAdded')}')),
     );
   }
 
@@ -610,7 +613,7 @@ class _WarpScreenState extends State<WarpScreen> {
       {'ip': r.ip, 'port': r.port, 'rank': 0},
     ]);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${r.endpoint} ${strings.get('addedToMatrix')}'), backgroundColor: context.surfaceColor),
+      SnackBar(content: Text('${r.endpoint} ${strings.get('addedToMatrix')}')),
     );
   }
 }

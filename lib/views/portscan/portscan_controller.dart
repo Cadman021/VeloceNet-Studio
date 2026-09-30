@@ -31,12 +31,12 @@ class PortscanController extends ChangeNotifier {
   List<PortScanResult> get openPorts =>
       _results.where((r) => r.state == PortState.open).toList();
 
-  void start(
+  Future<void> start(
     String rawHost,
     String portsSpec, {
     int timeoutMs = 1000,
     int concurrency = 64,
-  }) {
+  }) async {
     final host = TracerouteController.normalizeTraceHost(rawHost);
     if (host == null) {
       _error = 'Invalid host. Use an IPv4/IPv6 address or hostname.';
@@ -59,8 +59,24 @@ class PortscanController extends ChangeNotifier {
     _isCompleted = false;
     notifyListeners();
 
+    // Resolve ONCE up front: resolving per port would multiply DNS traffic
+    // by the port count (thousands of identical lookups).
+    List<InternetAddress> addrs;
+    try {
+      addrs = await InternetAddress.lookup(host)
+          .timeout(Duration(milliseconds: timeoutMs.clamp(100, 5000)));
+    } catch (_) {
+      if (runId != _runId) return;
+      _error = 'DNS resolution failed.';
+      _isRunning = false;
+      _isCompleted = true;
+      notifyListeners();
+      return;
+    }
+    if (runId != _runId || addrs.isEmpty) return;
+
     _run(
-      host,
+      addrs.first,
       ports,
       timeoutMs.clamp(100, 5000),
       concurrency.clamp(1, 256),
@@ -69,7 +85,7 @@ class PortscanController extends ChangeNotifier {
   }
 
   Future<void> _run(
-    String host,
+    InternetAddress addr,
     List<int> ports,
     int timeoutMs,
     int concurrency,
@@ -79,7 +95,7 @@ class PortscanController extends ChangeNotifier {
       if (runId != _runId) return; // stopped or superseded
       final batch = ports.skip(i).take(concurrency);
       final out = await Future.wait(
-        batch.map((p) => _probe(host, p, timeoutMs)),
+        batch.map((p) => _probe(addr, p, timeoutMs)),
       );
       if (runId != _runId) return;
       _results.addAll(out);
@@ -91,11 +107,12 @@ class PortscanController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<PortScanResult> _probe(String host, int port, int timeoutMs) async {
+  Future<PortScanResult> _probe(
+      InternetAddress addr, int port, int timeoutMs) async {
     final stopwatch = Stopwatch()..start();
     try {
       final socket = await Socket.connect(
-        host,
+        addr,
         port,
         timeout: Duration(milliseconds: timeoutMs),
       );
@@ -112,17 +129,20 @@ class PortscanController extends ChangeNotifier {
         service: serviceForPort(port),
         rttMs: rtt,
       );
-    } on TimeoutException {
+    } on SocketException catch (e) {
+      // NOTE: `Socket.connect`'s `timeout` surfaces as SocketException,
+      // never TimeoutException (verified empirically) — so refused vs timed
+      // out must be distinguished here, by OS error code with a message
+      // fallback for platforms without a distinct code.
       stopwatch.stop();
+      final filtered = _isTimeoutError(e);
       return PortScanResult(
         port: port,
-        state: PortState.filtered,
+        state: filtered ? PortState.filtered : PortState.closed,
         service: serviceForPort(port),
         rttMs: -1.0,
       );
     } catch (_) {
-      // Connection refused/reset and DNS failures land here; for a
-      // sweep this overwhelmingly means "closed".
       stopwatch.stop();
       return PortScanResult(
         port: port,
@@ -131,6 +151,14 @@ class PortscanController extends ChangeNotifier {
         rttMs: -1.0,
       );
     }
+  }
+
+  /// WSAETIMEDOUT (Windows), ETIMEDOUT (Linux/macOS) + message fallback.
+  static bool _isTimeoutError(SocketException e) {
+    const timeoutCodes = {10060, 110, 60};
+    final code = e.osError?.errorCode;
+    if (code != null && timeoutCodes.contains(code)) return true;
+    return e.message.toLowerCase().contains('timed out');
   }
 
   void stop() {

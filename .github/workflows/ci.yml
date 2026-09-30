@@ -40,3 +40,23 @@ jobs:
         run: cargo test --release
       - name: Clippy
         run: cargo clippy --release -- -D warnings
+
+  # Non-Windows lints rot silently when CI only builds Windows: the
+  # #[cfg(not(windows))] fallback modules are never compiled there
+  # (see the unused-import/variable warnings reported against stable
+  # 1.98). This job compiles exactly those paths.
+  rust-linux:
+    name: Rust clippy + test (Linux)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native_engine
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Clippy (deny warnings)
+        run: cargo clippy --release -- -D warnings
+      - name: Test
+        run: cargo test --release

@@ -568,8 +568,7 @@ class _PortscanScreenState extends State<PortscanScreen> {
                     content: Text(
                         '${r.port} ${strings.get('copied')}'),
                     duration: const Duration(seconds: 1),
-                    backgroundColor: context.surfaceColor,
-                  ),
+                                      ),
                 );
               },
             ),
@@ -584,9 +583,7 @@ class _PortscanScreenState extends State<PortscanScreen> {
     final open = c.openPorts;
     if (open.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(strings.get('noOpenPorts')),
-            backgroundColor: context.surfaceColor),
+        SnackBar(content: Text(strings.get('noOpenPorts'))),
       );
       return;
     }
@@ -597,8 +594,7 @@ class _PortscanScreenState extends State<PortscanScreen> {
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content: Text('${open.length} ${strings.get('copied')}'),
-          backgroundColor: context.surfaceColor),
+          content: Text('${open.length} ${strings.get('copied')}')),
     );
   }
 }

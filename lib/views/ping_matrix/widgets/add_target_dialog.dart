@@ -3,6 +3,7 @@ import '../../../core/i18n/app_strings.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/theme_x.dart';
 import '../../../models/ping_target.dart';
+import '../../traceroute/traceroute_controller.dart';
 
 class AddTargetDialog extends StatefulWidget {
   final Function(PingTarget) onAdd;
@@ -44,11 +45,20 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
 
   void _submit() {
     if (_formKey.currentState?.validate() ?? false) {
-      final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      // Full millisecond timestamp (not ~/1000 seconds): two adds can no
+      // longer collide by landing in the same second and clobbering each
+      // other's metrics. The dialog also pops on submit, so same-ms
+      // double-submit is impossible through this UI.
+      final id = DateTime.now().millisecondsSinceEpoch;
+      final host =
+          TracerouteController.normalizeTraceHost(_hostController.text) ??
+              _hostController.text.trim();
+      var name = _nameController.text.trim();
+      if (name.isEmpty) name = host;
       final target = PingTarget(
         id: id,
-        name: _nameController.text.trim(),
-        host: _hostController.text.trim(),
+        name: name,
+        host: host,
         port: int.tryParse(_portController.text.trim()) ?? 80,
         protocol: _selectedProtocol,
         intervalMs: int.tryParse(_intervalController.text.trim()) ?? 1000,
@@ -136,7 +146,13 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
                       hint: strings.get('hostHint'),
                       validator: (v) {
                         if (v == null || v.isEmpty) return strings.get('hostRequired');
-                        if (v.length > 253) return strings.get('hostRequired');
+                        // Same validator the engines use: "https://github.com"
+                        // normalizes to "github.com" on submit, while
+                        // genuinely bad hosts fail here instead of becoming
+                        // a stuck Pending card later.
+                        if (TracerouteController.normalizeTraceHost(v) == null) {
+                          return strings.get('invalidHost');
+                        }
                         return null;
                       },
                     ),

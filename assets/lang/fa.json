@@ -222,5 +222,6 @@
   "skippedCount": "رد شد",
   "invalidImport": "محتوای بکاپ نامعتبر است",
   "targetsSaved": "بکاپ سرورها ذخیره شد",
-  "paste": "چسباندن"
+  "paste": "چسباندن",
+  "invalidHost": "یک IP یا hostname معتبر وارد کنید"
 }

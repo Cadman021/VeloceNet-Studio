@@ -224,8 +224,7 @@ class _HopRow extends StatelessWidget {
                         SnackBar(
                           content: Text('${hop.ip} ${strings.get('copiedSuffix')}'),
                           duration: const Duration(seconds: 1),
-                          backgroundColor: context.surfaceColor,
-                        ),
+                                                  ),
                       );
                     },
                   )

@@ -150,19 +150,27 @@ impl Engine {
         trackers: Arc<RwLock<HashMap<u32, TargetMetricTracker>>>,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) {
-        let interval = Duration::from_millis(config.interval_ms.max(200));
+        let period = Duration::from_millis(config.interval_ms.max(200));
         let timeout_dur = Duration::from_millis(config.timeout_ms.max(100));
 
         // Initial small jitter delay so all targets do not fire at the exact same millisecond
         let initial_delay = Duration::from_millis((config.id as u64 * 70) % 500);
         tokio::time::sleep(initial_delay).await;
 
+        // NOTE: a fixed `sleep(period)` AFTER each probe drifts the real
+        // period by the probe duration (period + RTT). `interval` ticks on a
+        // fixed schedule instead; `Skip` drops catch-up ticks after a slow
+        // probe rather than bursting.
+        let mut ticker =
+            tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     break;
                 }
-                _ = tokio::time::sleep(interval) => {
+                _ = ticker.tick() => {
                     let res = execute_probe(config.protocol, &config.host, config.port, timeout_dur).await;
                     if let Some(tracker) = trackers.write().get_mut(&config.id) {
                         tracker.record_sample(res.success, res.rtt_ms);

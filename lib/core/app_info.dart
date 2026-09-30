@@ -3,7 +3,7 @@
 class AppInfo {
   AppInfo._();
 
-  static const String kAppVersion = '1.1.0';
+  static const String kAppVersion = '1.2.0';
   static const String kAuthorName = 'Sina Cadman';
   static const String kAuthorUrl = 'https://github.com/Cadman021';
 }

@@ -48,19 +48,6 @@ typedef NetstudioGetMetricsJsonDart = Pointer<Utf8> Function(Pointer<Void>);
 typedef NetstudioFreeStringNative = Void Function(Pointer<Utf8>);
 typedef NetstudioFreeStringDart = void Function(Pointer<Utf8>);
 
-typedef NetstudioQuickPingNative = Double Function(
-  Pointer<Utf8> host,
-  Uint16 port,
-  Uint32 protocol,
-  Uint32 timeoutMs,
-);
-typedef NetstudioQuickPingDart = double Function(
-  Pointer<Utf8> host,
-  int port,
-  int protocol,
-  int timeoutMs,
-);
-
 typedef NetstudioTracerouteStartNative = Uint32 Function(
   Pointer<Utf8> host,
   Uint8 maxHops,
@@ -128,7 +115,6 @@ class NativeBindings {
   NetstudioIsRunningDart? _isRunning;
   NetstudioGetMetricsJsonDart? _getMetricsJson;
   NetstudioFreeStringDart? _freeString;
-  NetstudioQuickPingDart? _quickPing;
 
   NetstudioTracerouteStartDart? _tracerouteStart;
   NetstudioTraceroutePollDart? _traceroutePoll;
@@ -175,10 +161,6 @@ class NativeBindings {
       try {
         _freeString = lib.lookupFunction<NetstudioFreeStringNative, NetstudioFreeStringDart>('netstudio_free_string');
       } catch (_) {}
-      try {
-        _quickPing = lib.lookupFunction<NetstudioQuickPingNative, NetstudioQuickPingDart>('netstudio_quick_ping');
-      } catch (_) {}
-
       try {
         _tracerouteStart = lib.lookupFunction<NetstudioTracerouteStartNative, NetstudioTracerouteStartDart>('netstudio_traceroute_start');
       } catch (_) {}
@@ -285,17 +267,6 @@ class NativeBindings {
       return strPtr.toDartString();
     } finally {
       _freeString!(strPtr);
-    }
-  }
-
-  double quickPing(String host, int port, int protocol, int timeoutMs) {
-    if (_quickPing == null) return -1.0;
-    if (!isValidHost(host) || !isValidPort(port) || !isValidProtocol(protocol)) return -1.0;
-    final hostPtr = host.toNativeUtf8();
-    try {
-      return _quickPing!(hostPtr, port, protocol, clampTimeout(timeoutMs));
-    } finally {
-      calloc.free(hostPtr);
     }
   }
 

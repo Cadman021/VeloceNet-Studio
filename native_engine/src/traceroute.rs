@@ -1,7 +1,11 @@
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+// Only consumed inside the #[cfg(windows)] module (via `use super::*`);
+// ungated, they warn as unused on Linux/macOS builds.
+#[cfg(windows)]
 use std::ffi::c_void;
+#[cfg(windows)]
 use std::mem::size_of;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -93,7 +97,7 @@ mod win_icmp {
                 let octets = reply.address.to_be_bytes();
                 let hop_ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
                 let rtt = if reply.round_trip_time == 0 {
-                    if elapsed_ms < 1.0 { elapsed_ms.max(0.2) } else { 0.5 }
+                    elapsed_ms.max(0.2)
                 } else {
                     reply.round_trip_time as f64
                 };
@@ -284,9 +288,35 @@ impl TracerouteManager {
                 p.current_hop = ttl;
             }
 
-            // Probe with specific TTL on the shared handle
-            let (hop_ip_opt, rtt, is_timeout, reached_dest, status) =
-                win_icmp::probe_hop_on_handle(handle, dest_ip_u32, ttl, timeout_ms);
+            // Probe with specific TTL on the shared handle, 3 samples
+            // like the system `tracert` (single samples spike: one slow
+            // router used to define the whole hop's RTT).
+            let mut samples = 0u32;
+            let mut rtt_sum = 0.0;
+            let mut hop_ip_opt = None;
+            let mut reached_dest = false;
+            let mut status = "Request Timed Out".to_string();
+            for _ in 0..3 {
+                if cancel_flag.load(Ordering::SeqCst) {
+                    break;
+                }
+                let (ip, rtt, timed_out, reached, s) =
+                    win_icmp::probe_hop_on_handle(handle, dest_ip_u32, ttl, timeout_ms);
+                if !timed_out {
+                    samples += 1;
+                    rtt_sum += rtt;
+                    if hop_ip_opt.is_none() {
+                        hop_ip_opt = ip;
+                    }
+                    reached_dest = reached_dest || reached;
+                    status = s;
+                }
+            }
+            let (rtt, is_timeout) = if samples > 0 {
+                (rtt_sum / samples as f64, false)
+            } else {
+                (-1.0, true)
+            };
 
             let (ip_str, reached_final) = match hop_ip_opt {
                 Some(ip) => {

@@ -72,12 +72,14 @@ class _MainShellViewState extends State<MainShellView> {
   Widget build(BuildContext context) {
     final strings = AppStrings(widget.settings.locale);
     final isFa = widget.settings.locale.languageCode == 'fa';
+    // Honest capability label: native ICMP tracing exists on Windows only;
+    // elsewhere the engine runs TCP probes and the system tracer is used.
     final platformLabel = Platform.isWindows
         ? 'Windows x64 Native Core'
         : Platform.isLinux
-            ? 'Linux Native Core'
+            ? 'Linux Core (TCP mode)'
             : Platform.isMacOS
-                ? 'macOS Native Core'
+                ? 'macOS Core (TCP mode)'
                 : 'Native Core';
     return Scaffold(
       body: Directionality(

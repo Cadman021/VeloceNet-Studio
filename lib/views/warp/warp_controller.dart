@@ -21,6 +21,16 @@ class WarpController extends ChangeNotifier {
   Timer? _pollTimer;
   int _activeSessionId = 0;
   bool _cancelFallback = false;
+  bool? _isUsingNativeOverride;
+  // Generation counter: starting a new scan while a Dart fallback loop is
+  // still awaiting a chunk would otherwise let the old loop keep writing
+  // into the new run's progress (same stale-write race class as fixed in
+  // the traceroute/portscan/dns controllers).
+  int _runId = 0;
+
+  /// Actual probe path of the current/last run; falls back to mere
+  /// availability before the first scan.
+  bool get isUsingNative => _isUsingNativeOverride ?? isNativeAvailable;
 
   // --- User selections ---
   final Set<String> selectedRangeIds = {
@@ -91,7 +101,27 @@ class WarpController extends ChangeNotifier {
   void start() {
     final endpoints = expandEndpoints();
     if (endpoints.isEmpty) return;
+    // The native engine caps scans at 4096 endpoints; the Dart fallback
+    // must honor the same bound instead of firing tens of thousands of
+    // TCP connects (4 ranges x 22 ports would be ~22k sockets).
+    if (endpoints.length > NativeBindings.maxWarpEndpoints) {
+      _progress = WarpProgress(
+        sessionId: 0,
+        total: endpoints.length,
+        tested: 0,
+        succeeded: 0,
+        failed: 0,
+        isRunning: false,
+        isCompleted: false,
+        results: const [],
+        error:
+            'Too many endpoints (${endpoints.length} > ${NativeBindings.maxWarpEndpoints}). Reduce ranges or ports.',
+      );
+      notifyListeners();
+      return;
+    }
     stop(silent: true);
+    final int runId = ++_runId;
     _cancelFallback = false;
 
     _progress = const WarpProgress(
@@ -107,23 +137,24 @@ class WarpController extends ChangeNotifier {
     notifyListeners();
 
     if (_bindings.isWarpReady) {
-      _startNative(endpoints);
+      _startNative(endpoints, runId);
     } else {
-      _startFallback(endpoints);
+      _startFallback(endpoints, runId);
     }
   }
 
-  void _startNative(List<String> endpoints) {
+  void _startNative(List<String> endpoints, int runId) {
+    _isUsingNativeOverride = true;
     final csv = endpoints.join(',');
     _activeSessionId = _bindings.startWarpScan(csv, parallel, timeoutMs);
     if (_activeSessionId == 0) {
-      _startFallback(endpoints);
+      _startFallback(endpoints, runId);
       return;
     }
     _pollTimer?.cancel();
     int lastTested = -1;
     _pollTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
-      if (_activeSessionId == 0) {
+      if (_activeSessionId == 0 || runId != _runId) {
         timer.cancel();
         return;
       }
@@ -152,17 +183,19 @@ class WarpController extends ChangeNotifier {
   }
 
   // --- Dart fallback: TCP connect per endpoint, chunked ---
-  Future<void> _startFallback(List<String> endpoints) async {
+  Future<void> _startFallback(List<String> endpoints, int runId) async {
+    _isUsingNativeOverride = false;
     final results = <WarpResult>[];
     int tested = 0, ok = 0;
     final chunk = parallel.clamp(1, 64);
 
     for (int i = 0; i < endpoints.length; i += chunk) {
-      if (_cancelFallback) break;
+      if (_cancelFallback || runId != _runId) break;
       final slice = endpoints.sublist(
           i, (i + chunk).clamp(0, endpoints.length));
       final chunkResults = await Future.wait(
           slice.map((e) => _tcpProbeFallback(e)));
+      if (_cancelFallback || runId != _runId) break;
       for (final r in chunkResults) {
         results.add(r);
         tested++;
@@ -181,7 +214,7 @@ class WarpController extends ChangeNotifier {
       notifyListeners();
     }
 
-    if (!_cancelFallback) {
+    if (!_cancelFallback && runId == _runId) {
       _progress = WarpProgress(
         sessionId: 0,
         total: endpoints.length,
@@ -232,6 +265,7 @@ class WarpController extends ChangeNotifier {
   void stop({bool silent = false}) {
     _pollTimer?.cancel();
     _pollTimer = null;
+    _runId++;
     _cancelFallback = true;
     final sid = _activeSessionId;
     _activeSessionId = 0;

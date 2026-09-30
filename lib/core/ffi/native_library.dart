@@ -1,6 +1,8 @@
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 class NativeLibrary {
   static DynamicLibrary? _instance;
   static bool _isLoaded = false;
@@ -16,9 +18,10 @@ class NativeLibrary {
     return _instance;
   }
 
-  /// Secure load: only from absolute paths anchored at the running
-  /// executable (or the project root during `flutter run`), never from
-  /// cwd-relative / PATH probing which enables DLL hijacking.
+  /// Secure load: in release builds, only from an absolute path anchored
+  /// at the running executable — never cwd/`PATH` probing (DLL hijacking).
+  /// Debug builds additionally try cwd-anchored project paths so
+  /// `flutter run` works without installing the library.
   static DynamicLibrary? _loadLibrary() {
     final String fileName;
     if (Platform.isWindows) {
@@ -37,17 +40,20 @@ class NativeLibrary {
       candidates.add('$exeDir${Platform.pathSeparator}$fileName');
     } catch (_) {}
 
-    // Dev convenience: <project>/native_engine/target/{release,debug}
-    // resolved absolutely from the executable location is not reliable
-    // under `flutter run`, so also try cwd-anchored absolute paths.
-    try {
-      final root = Directory.current.path;
-      candidates.addAll([
-        '$root${Platform.pathSeparator}$fileName',
-        '$root${Platform.pathSeparator}native_engine${Platform.pathSeparator}target${Platform.pathSeparator}release${Platform.pathSeparator}$fileName',
-        '$root${Platform.pathSeparator}native_engine${Platform.pathSeparator}target${Platform.pathSeparator}debug${Platform.pathSeparator}$fileName',
-      ]);
-    } catch (_) {}
+    // Dev convenience (debug builds ONLY): <project> paths anchored at
+    // the working directory. Resolving them absolutely does NOT make them
+    // safe — cwd is attacker-influenced — so release builds skip them and
+    // load exclusively from the executable directory above.
+    if (kDebugMode) {
+      try {
+        final root = Directory.current.path;
+        candidates.addAll([
+          '$root${Platform.pathSeparator}$fileName',
+          '$root${Platform.pathSeparator}native_engine${Platform.pathSeparator}target${Platform.pathSeparator}release${Platform.pathSeparator}$fileName',
+          '$root${Platform.pathSeparator}native_engine${Platform.pathSeparator}target${Platform.pathSeparator}debug${Platform.pathSeparator}$fileName',
+        ]);
+      } catch (_) {}
+    }
 
     for (final path in candidates) {
       // Skip anything that is not an absolute path.

@@ -222,5 +222,6 @@
   "skippedCount": "Пропущено",
   "invalidImport": "Некорректное содержимое",
   "targetsSaved": "Резервная копия сохранена",
-  "paste": "Вставить"
+  "paste": "Вставить",
+  "invalidHost": "Введите корректный IP или hostname"
 }

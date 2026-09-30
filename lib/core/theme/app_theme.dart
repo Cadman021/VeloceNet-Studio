@@ -38,6 +38,18 @@ class AppTheme {
           side: const BorderSide(color: Color(0xFFE2E8F0), width: 1),
         ),
       ),
+      // Toast-style snackbar, identical in both themes: a single bg+text
+      // pair pinned here (per-site SnackBars must NOT set their own
+      // backgroundColor — it freezes at show time and desyncs from the
+      // text color across theme switches).
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: Color(0xFF111726),
+        contentTextStyle: TextStyle(
+          color: Color(0xFFF8FAFC),
+          fontSize: 13,
+        ),
+        actionTextColor: AppColors.primary,
+      ),
     );
   }
 
@@ -76,6 +88,15 @@ class AppTheme {
           borderRadius: BorderRadius.circular(16),
           side: const BorderSide(color: AppColors.surfaceBorder, width: 1),
         ),
+      ),
+      // Same toast pair as light theme (see above).
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: AppColors.surface,
+        contentTextStyle: TextStyle(
+          color: AppColors.textPrimary,
+          fontSize: 13,
+        ),
+        actionTextColor: AppColors.primary,
       ),
       textTheme: const TextTheme(
         headlineMedium: TextStyle(

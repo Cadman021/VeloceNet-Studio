@@ -157,6 +157,22 @@ class _SparklinePainter extends CustomPainter {
     }
   }
 
+  // Repaint only when the visible shape can actually differ: length,
+  // edges (the sliding window drops the front and appends the back) or
+  // the status color. Comparing full lists each frame would cost more
+  // than the repaint it tries to skip.
   @override
-  bool shouldRepaint(covariant _SparklinePainter oldDelegate) => true;
+  bool shouldRepaint(covariant _SparklinePainter oldDelegate) {
+    if (identical(history, oldDelegate.history) &&
+        overrideColor == oldDelegate.overrideColor) {
+      return false;
+    }
+    if (history.length != oldDelegate.history.length ||
+        overrideColor != oldDelegate.overrideColor) {
+      return true;
+    }
+    if (history.isEmpty) return false;
+    return history.first != oldDelegate.history.first ||
+        history.last != oldDelegate.history.last;
+  }
 }

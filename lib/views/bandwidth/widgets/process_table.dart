@@ -127,8 +127,7 @@ class _ProcessRow extends StatelessWidget {
                   SnackBar(
                     content: Text('PID ${proc.pid} ${strings.get('pidCopied')}'),
                     duration: const Duration(seconds: 1),
-                    backgroundColor: context.surfaceColor,
-                  ),
+                                      ),
                 );
               },
               child: Text(

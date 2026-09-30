@@ -49,4 +49,32 @@ mod tests {
         assert_eq!(snap.max_rtt_ms, 30.0);
         assert_eq!(snap.avg_rtt_ms, 25.0);
     }
+
+    #[test]
+    fn test_status_recovers_on_recent_window() {
+        // Down for a long while (40 losses fill the window → Offline),
+        // then healthy again: status must follow the recent window back
+        // to Online/ Degraded instead of sticking on lifetime loss.
+        let mut tracker = TargetMetricTracker::new(
+            2,
+            "Flaky".to_string(),
+            "10.0.0.1".to_string(),
+            80,
+            "TCP".to_string(),
+        );
+
+        for _ in 0..40 {
+            tracker.record_sample(false, -1.0);
+        }
+        assert_eq!(tracker.snapshot().status, TargetStatus::Offline);
+
+        // 40 healthy samples push every loss out of the 40-sample window.
+        for _ in 0..40 {
+            tracker.record_sample(true, 20.0);
+        }
+        let snap = tracker.snapshot();
+        // Lifetime loss is still 50%, but the window is clean.
+        assert!((snap.loss_rate - 50.0).abs() < 1.0);
+        assert_eq!(snap.status, TargetStatus::Online);
+    }
 }

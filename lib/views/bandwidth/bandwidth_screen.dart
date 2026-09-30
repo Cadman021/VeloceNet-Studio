@@ -41,8 +41,7 @@ class _BandwidthScreenState extends State<BandwidthScreen> {
         SnackBar(
           content: Text(strings.get('enterValidNumber')),
           duration: const Duration(seconds: 2),
-          backgroundColor: context.surfaceColor,
-        ),
+                  ),
       );
       return;
     }

@@ -4,14 +4,32 @@ import '../models/ping_metric.dart';
 
 /// RFC 4180 field escaping: quote when the value contains a comma, quote,
 /// or line break, doubling embedded quotes.
+///
+/// Plus formula-injection defense: a cell starting with `=`, `+`, `-`, `@`,
+/// tab or CR is force-quoted AND prefixed with `'`. Spreadsheet apps treat
+/// a leading single quote as a text marker (not displayed, not part of the
+/// value), so `=cmd|...` payloads in server names can never execute.
 String _csvField(String value) {
-  if (value.contains(',') ||
+  const risky = ['=', '+', '-', '@', '\t', '\r'];
+  final needsQuote = value.contains(',') ||
       value.contains('"') ||
       value.contains('\n') ||
-      value.contains('\r')) {
-    return '"${value.replaceAll('"', '""')}"';
+      value.contains('\r') ||
+      (value.isNotEmpty && risky.contains(value[0]));
+  if (!needsQuote) return value;
+  var escaped = value.replaceAll('"', '""');
+  if (value.isNotEmpty && risky.contains(value[0])) {
+    escaped = "'$escaped";
   }
-  return value;
+  return '"$escaped"';
+}
+
+/// Empty for never-checked targets (`epochMs == 0` would otherwise render
+/// as the misleading 1970-01-01T00:00:00.000Z).
+String _checkedAtIso(int epochMs) {
+  if (epochMs <= 0) return '';
+  return DateTime.fromMillisecondsSinceEpoch(epochMs, isUtc: true)
+      .toIso8601String();
 }
 
 const List<String> kMetricsCsvHeader = [
@@ -58,10 +76,7 @@ String buildMetricsCsv(Map<int, PingMetric> metrics) {
       num(m.maxRttMs),
       num(m.avgRttMs),
       num(m.jitterMs),
-      _csvField(DateTime.fromMillisecondsSinceEpoch(
-        m.lastCheckedEpochMs,
-        isUtc: true,
-      ).toIso8601String()),
+      _csvField(_checkedAtIso(m.lastCheckedEpochMs)),
     ];
     buffer.writeln(row.join(','));
   }

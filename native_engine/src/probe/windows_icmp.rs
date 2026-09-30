@@ -93,9 +93,12 @@ pub mod imp {
                 // Note: no IP display conversion needed here (status only).
                 // IP_SUCCESS is 0
                 if reply.status == 0 {
+                    // IcmpSendEcho reports whole milliseconds, so sub-ms
+                    // LAN replies come back as 0. The wall-clock measurement
+                    // is the honest value then (previously a fabricated
+                    // constant 0.5 was used whenever elapsed >= 1 ms).
                     let rtt = if reply.round_trip_time == 0 {
-                        // Sub-millisecond on local networks
-                        if elapsed_ms < 1.0 { elapsed_ms } else { 0.5 }
+                        elapsed_ms
                     } else {
                         reply.round_trip_time as f64
                     };
@@ -126,7 +129,7 @@ pub mod imp {
 pub mod imp {
     use super::super::tcp::ProbeResult;
 
-    pub fn ping_icmp_sync(host: &str, _timeout_ms: u32) -> ProbeResult {
+    pub fn ping_icmp_sync(_host: &str, _timeout_ms: u32) -> ProbeResult {
         // Fallback for non-Windows platforms (will use TCP probe or system ping)
         ProbeResult {
             success: false,

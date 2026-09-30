@@ -52,5 +52,42 @@ void main() {
       final csv = buildMetricsCsv({});
       expect(csv.trim().split('\n'), hasLength(1));
     });
+
+    test('formula cells are neutralized, never executed', () {
+      final csv = buildMetricsCsv({
+        1: _metric(name: '=cmd|calc!A1'),
+        2: _metric(id: 2, name: '+7920555', host: '@evil'),
+      });
+      expect(csv, contains('"\'=cmd|calc!A1"'));
+      expect(csv, contains('"\'@evil"'));
+      expect(csv, isNot(contains(',=cmd')));
+    });
+
+    test('never-checked targets leave the timestamp empty, not 1970', () {
+      final m = _metric();
+      final csv = buildMetricsCsv({
+        1: PingMetric(
+          id: 1,
+          name: m.name,
+          host: m.host,
+          port: m.port,
+          protocol: m.protocol,
+          status: TargetStatus.pending,
+          sentCount: 0,
+          receivedCount: 0,
+          lostCount: 0,
+          lossRate: 0.0,
+          lastRttMs: 0.0,
+          minRttMs: 0.0,
+          maxRttMs: 0.0,
+          avgRttMs: 0.0,
+          jitterMs: 0.0,
+          history: const [],
+          lastCheckedEpochMs: 0,
+        ),
+      });
+      expect(csv, isNot(contains('1970')));
+      expect(csv.trim().split('\n').last.endsWith(','), isTrue);
+    });
   });
 }

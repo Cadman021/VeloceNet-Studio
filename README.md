@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.1.0](https://img.shields.io/badge/release-v1.1.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.1.0)
+[![Release v1.2.0](https://img.shields.io/badge/release-v1.2.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -39,7 +39,7 @@ Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp end
 
 ## Features
 
-- **Ping Matrix** — concurrent ICMP (Windows IP Helper, no admin needed) + TCP-handshake probes, live sparklines, RTT avg/min/max, RFC 3550 jitter, loss %, status-change **alert log** with unread badge, one-click **CSV export**.
+- **Ping Matrix** — concurrent ICMP (Windows IP Helper, no admin needed) + TCP-handshake probes, live sparklines, RTT avg/min/max, RFC 3550 jitter, loss %, status-change **alert log** with unread badge, one-click **CSV export** and versioned **JSON backup** (export + paste-to-import).
 - **Traceroute** — TTL-based visual hop chain + data table (Windows native ICMP), IPv4/IPv6 parsing, averaged multi-sample RTT.
 - **Bandwidth** — per-interface live deltas via `GetIfTable2` (64-bit counters), top processes by connection share (explicitly labeled *estimated*).
 - **Warp Scanner** — WireGuard-style UDP probe + TCP fallback, ranking, copy-to-clipboard, one-click add to Ping Matrix.
@@ -48,10 +48,10 @@ Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp end
 - **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English).
 - **Resilient engine** — if the Rust `.dll`/`.so` isn't built, the app automatically uses the Dart fallback prober so the UI stays usable.
 
-## Download (v1.1.0)
+## Download (v1.2.0)
 
 No build needed — pick your platform from the
-[v1.1.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.1.0):
+[v1.2.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0):
 
 | Platform | File | Run |
 |---|---|---|
@@ -106,7 +106,6 @@ lib/
   core/theme/                    # app_colors.dart, app_theme.dart, theme_x.dart
   core/settings/                 # settings_controller.dart (theme+locale)
   core/i18n/                     # JSON-backed AppStrings (en/fa/ru/zh, default en)
-  core/settings/                 # theme + locale controller (persisted)
   models/ services/ state/       # incl. alert_log.dart (status-change history)
   views/
     main_shell_view.dart         # sidebar + IndexedStack tabs
@@ -137,4 +136,4 @@ New UI strings must go through the JSON dictionaries in `assets/lang/` (all four
 
 ## Changelog & roadmap
 
-See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Linux/macOS native ICMP, Prometheus export endpoint, real per-process accounting (ETW), server-config import/export (JSON).
+See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Linux/macOS native ICMP, Prometheus export endpoint, real per-process accounting (ETW), uptime-history persistence.
