@@ -10,7 +10,11 @@ use std::mem::size_of;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+// Only consumed inside the #[cfg(windows)] module (via `use super::*`);
+// ungated, it warns as unused on Linux/macOS builds.
+#[cfg(windows)]
+use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
