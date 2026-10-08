@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.2.0](https://img.shields.io/badge/release-v1.2.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0)
+[![Release v1.3.0](https://img.shields.io/badge/release-v1.3.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -12,6 +12,8 @@ Cross-platform **network monitoring and analysis studio** built with **Flutter**
 Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp endpoint scanner, TCP port scanner and DNS lookup — with Light/Dark/System themes and English/فارسی/Русский/中文 UI.
 
 > License: **GPL-3.0-or-later** — see [LICENSE](LICENSE).
+>
+> Read this in: [فارسی](README.fa.md) · [Русский](README.ru.md) · [中文](README.zh.md).
 
 ## Screenshots
 
@@ -33,25 +35,30 @@ Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp end
 |---|---|
 | ![Port Scanner](docs/screenshots/07-portscan.png) | ![Alert log](docs/screenshots/08-alerts.png) |
 
-| DNS Lookup |
+| DNS Lookup | Uptime history |
+|---|---|
+| ![DNS Lookup](docs/screenshots/09-dns.png) | ![Uptime history](docs/screenshots/10-uptime-history.png) |
+
+| MTR |
 |---|
-| ![DNS Lookup](docs/screenshots/09-dns.png) |
+| ![MTR](docs/screenshots/11-mtr.png) |
 
 ## Features
 
-- **Ping Matrix** — concurrent ICMP (Windows IP Helper, no admin needed) + TCP-handshake probes, live sparklines, RTT avg/min/max, RFC 3550 jitter, loss %, status-change **alert log** with unread badge, one-click **CSV export** and versioned **JSON backup** (export + paste-to-import).
+- **Ping Matrix** — concurrent ICMP (Windows IP Helper, no admin needed) + TCP-handshake probes, live sparklines, RTT avg/min/max, RFC 3550 jitter, loss %, status-change **alert log** with unread badge, one-click **CSV export**, versioned **JSON backup** (export + paste-to-import), and per-target **24h uptime history** with outage report.
 - **Traceroute** — TTL-based visual hop chain + data table (Windows native ICMP), IPv4/IPv6 parsing, averaged multi-sample RTT.
+- **MTR** — trace once, then continuously ping every responding hop (loss/avg/best/worst per hop) on an isolated engine instance.
 - **Bandwidth** — per-interface live deltas via `GetIfTable2` (64-bit counters), top processes by connection share (explicitly labeled *estimated*).
 - **Warp Scanner** — WireGuard-style UDP probe + TCP fallback, ranking, copy-to-clipboard, one-click add to Ping Matrix.
 - **Port Scanner** — TCP sweep with port-list specs (`80,443,8000-8010`), open/closed/filtered states, service guesses.
 - **DNS Lookup** — raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server, with NXDOMAIN distinction and query-time display.
-- **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English).
+- **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English), plus Telegram/Discord alert webhooks with test buttons.
 - **Resilient engine** — if the Rust `.dll`/`.so` isn't built, the app automatically uses the Dart fallback prober so the UI stays usable.
 
-## Download (v1.2.0)
+## Download (v1.3.0)
 
 No build needed — pick your platform from the
-[v1.2.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0):
+[v1.3.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0):
 
 | Platform | File | Run |
 |---|---|---|
@@ -87,7 +94,7 @@ Linux/macOS: `cargo build --release` produces `libnetstudio_engine.so` / `.dylib
 
 ```
 ┌──────────── Flutter UI ────────────┐      ┌────────── Rust engine ──────────┐
-│ Ping Matrix · Traceroute           │ JSON │ Tokio probers (ICMP/TCP/TTL)    │
+│ Ping Matrix · Traceroute · MTR     │ JSON │ Tokio probers (ICMP/TCP/TTL)    │
 │ Bandwidth · Warp · Portscan · DNS  │◄────►│ stats (RTT/jitter/loss)         │
 │ SettingsController (theme+locale)  │  FFI │ traceroute / bandwidth / warp   │
 └────────────────────────────────────┘      └─────────────────────────────────┘
@@ -136,4 +143,4 @@ New UI strings must go through the JSON dictionaries in `assets/lang/` (all four
 
 ## Changelog & roadmap
 
-See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Linux/macOS native ICMP, Prometheus export endpoint, real per-process accounting (ETW), uptime-history persistence.
+See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Linux/macOS native ICMP, Prometheus export endpoint, real per-process accounting (ETW), desktop notifications for alerts.

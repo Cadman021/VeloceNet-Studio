@@ -11,12 +11,14 @@ class TargetCard extends StatelessWidget {
   final PingTarget target;
   final PingMetric? metric;
   final VoidCallback onDeletePressed;
+  final VoidCallback onHistoryPressed;
 
   const TargetCard({
     super.key,
     required this.target,
     required this.metric,
     required this.onDeletePressed,
+    required this.onHistoryPressed,
   });
 
   @override
@@ -138,9 +140,29 @@ class TargetCard extends StatelessWidget {
                       side: BorderSide(color: context.borderColor),
                     ),
                     onSelected: (val) {
-                      if (val == 'delete') onDeletePressed();
+                      if (val == 'delete') {
+                        onDeletePressed();
+                      } else if (val == 'history') {
+                        onHistoryPressed();
+                      }
                     },
                     itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'history',
+                        child: Row(
+                          children: [
+                            Icon(Icons.history_rounded,
+                                size: 16, color: context.textSecondaryColor),
+                            const SizedBox(width: 8),
+                            Text(
+                              strings.get('viewHistory'),
+                              style: TextStyle(
+                                  color: context.textPrimaryColor,
+                                  fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
                       PopupMenuItem(
                         value: 'delete',
                         child: Row(

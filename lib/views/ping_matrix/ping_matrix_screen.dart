@@ -7,6 +7,7 @@ import '../../state/ping_matrix_controller.dart';
 import 'widgets/add_target_dialog.dart';
 import 'widgets/stats_summary_bar.dart';
 import 'widgets/target_card.dart';
+import 'widgets/uptime_history_dialog.dart';
 
 class PingMatrixScreen extends StatefulWidget {
   final PingMatrixController controller;
@@ -142,6 +143,13 @@ class _PingMatrixScreenState extends State<PingMatrixScreen> {
                                   metric: metric,
                                   onDeletePressed: () {
                                     widget.controller.removeTarget(target.id);
+                                  },
+                                  onHistoryPressed: () {
+                                    UptimeHistoryDialog.show(
+                                      context,
+                                      target,
+                                      widget.controller.historyService,
+                                    );
                                   },
                                 );
                               },

@@ -9,6 +9,13 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Nothing yet — see `main` for work toward the next release.
 
+## [1.3.0] — 2026-10-08
+
+### Added
+- Alert webhooks: Telegram bot + Discord delivery on every status transition (fixed English format, 5-minute per-target anti-flap cooldown), configured in Settings with per-channel test buttons. Secrets persist locally next to other preferences.
+- MTR tab: trace once, then ping every responding hop continuously on a dedicated engine instance (isolated from the matrix tab), with per-hop loss/avg/best/worst and copyable IPs. Fully localized and theme-aware.
+- Uptime history: per-minute rollups (avg RTT, loss, worst status) persisted as one JSON file per UTC day (7-day retention), with a per-target 24-hour dialog (hourly status bars, uptime %, outage list with durations). Pure-Dart storage — no native database dependencies on any release platform.
+
 ## [1.2.0] — 2026-09-30
 
 ### Added
@@ -91,7 +98,8 @@ First public release.
 - Native metrics polling interval 200 ms → 500 ms (less UI-thread JSON pressure); `print` → `debugPrint` in the engine service.
 - Rank medals (🥇🥈🥉) replaced with text ranks (`#1`, `#2`, …) for font/i18n safety.
 
-[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.0.0

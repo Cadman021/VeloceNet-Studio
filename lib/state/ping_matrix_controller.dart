@@ -4,12 +4,14 @@ import '../models/ping_metric.dart';
 import '../models/ping_target.dart';
 import '../services/network_engine_service.dart';
 import '../services/preset_targets.dart';
+import '../services/uptime_history.dart';
 import 'alert_log.dart';
 
 class PingMatrixController extends ChangeNotifier {
   final NetworkEngineService _service = NetworkEngineService();
   StreamSubscription<List<PingMetric>>? _metricsSub;
   final AlertLog alertLog = AlertLog();
+  final UptimeHistoryService historyService = UptimeHistoryService();
 
   List<PingTarget> _targets = [];
   final Map<int, PingMetric> _metrics = {};
@@ -62,6 +64,8 @@ class PingMatrixController extends ChangeNotifier {
   void init() {
     _targets = PresetTargets.getDefaultTargets();
     _service.initialize(_targets);
+    // Best-effort history; frames before init completes are skipped.
+    unawaited(historyService.init());
 
     _metricsSub = _service.metricsStream.listen((list) {
       for (final m in list) {
@@ -80,6 +84,9 @@ class PingMatrixController extends ChangeNotifier {
         }
         _metrics[m.id] = m;
       }
+      // Fire-and-forget: aggregation is synchronous; only minute rollover
+      // touches disk, off the critical rebuild path.
+      unawaited(historyService.recordFrame(_metrics));
       notifyListeners();
     });
 
@@ -157,6 +164,7 @@ class PingMatrixController extends ChangeNotifier {
   @override
   void dispose() {
     _metricsSub?.cancel();
+    unawaited(historyService.flush());
     _service.dispose();
     super.dispose();
   }

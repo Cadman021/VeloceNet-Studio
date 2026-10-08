@@ -5,9 +5,11 @@ import '../core/theme/theme_x.dart';
 import '../core/settings/settings_controller.dart';
 import '../core/theme/app_colors.dart';
 import '../models/ping_target.dart';
+import '../services/webhook_dispatcher.dart';
 import '../state/ping_matrix_controller.dart';
 import 'bandwidth/bandwidth_screen.dart';
 import 'dnslookup/dnslookup_screen.dart';
+import 'mtr/mtr_screen.dart';
 import 'ping_matrix/ping_matrix_screen.dart';
 import 'portscan/portscan_screen.dart';
 import 'settings/settings_screen.dart';
@@ -27,6 +29,7 @@ class _MainShellViewState extends State<MainShellView> {
   int _selectedIndex = 0;
   late final PingMatrixController _pingController;
   late final WarpController _warpController;
+  late final WebhookDispatcher _webhooks;
 
   @override
   void initState() {
@@ -34,10 +37,23 @@ class _MainShellViewState extends State<MainShellView> {
     _pingController = PingMatrixController();
     _pingController.init();
     _warpController = WarpController();
+    // Live alert delivery: reads the current webhook config on every event,
+    // so toggling in Settings takes effect without restarts.
+    _webhooks = WebhookDispatcher(
+      log: _pingController.alertLog,
+      configOf: () => WebhookConfig(
+        telegramEnabled: widget.settings.telegramEnabled,
+        telegramToken: widget.settings.telegramToken,
+        telegramChatId: widget.settings.telegramChatId,
+        discordEnabled: widget.settings.discordEnabled,
+        discordUrl: widget.settings.discordUrl,
+      ),
+    );
   }
 
   @override
   void dispose() {
+    _webhooks.dispose();
     _pingController.dispose();
     _warpController.dispose();
     super.dispose();
@@ -191,6 +207,11 @@ class _MainShellViewState extends State<MainShellView> {
                   ),
                   _buildNavItem(
                     index: 6,
+                    icon: Icons.route,
+                    label: strings.get('mtr'),
+                  ),
+                  _buildNavItem(
+                    index: 7,
                     icon: Icons.settings_rounded,
                     label: strings.get('settings'),
                   ),
@@ -263,7 +284,9 @@ class _MainShellViewState extends State<MainShellView> {
                   ),
                   const PortscanScreen(),
                   const DnslookupScreen(),
-                  SettingsScreen(settings: widget.settings),
+                  const MtrScreen(),
+                  SettingsScreen(
+                      settings: widget.settings, webhooks: _webhooks),
                 ],
               ),
             ),
