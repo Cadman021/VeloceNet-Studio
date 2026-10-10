@@ -1,7 +1,7 @@
 name: netstudio
 description: "Cross-Platform Network Studio - Advanced Network Monitoring and Analysis"
 publish_to: 'none'
-version: 1.3.0+1
+version: 1.4.0+1
 
 repository: https://github.com/Cadman021/VeloceNet-Studio
 homepage: https://github.com/Cadman021/VeloceNet-Studio
@@ -23,6 +23,11 @@ dependencies:
   path_provider: ^2.1.6
   shared_preferences: ^2.3.2
   url_launcher: ^6.3.2
+  # NOTE: flutter_secure_storage was dropped: its Windows backend needs
+  # ATL headers (atlstr.h) absent from default VS installs, breaking
+  # `flutter run`. Secrets use DPAPI-via-FFI instead (see secret_store.dart).
+  tray_manager: ^0.8.0
+  window_manager: ^0.5.2
 
 dev_dependencies:
   flutter_test:
@@ -37,6 +42,9 @@ flutter:
     - assets/lang/fa.json
     - assets/lang/ru.json
     - assets/lang/zh.json
+    # Bundled (not just launcher input) so the tray icon can load it at
+    # runtime via ImageAsset.fromAsset.
+    - assets/icons/app_icon.png
 
 flutter_launcher_icons:
   android: true

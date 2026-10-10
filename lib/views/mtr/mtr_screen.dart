@@ -101,8 +101,19 @@ class _MtrScreenState extends State<MtrScreen> {
                   ),
                 ],
               ),
-              const Spacer(),
-              ElevatedButton.icon(
+          const Spacer(),
+          // Re-trace: route changes mid-run would otherwise leave stale
+          // hops monitored forever. Restarts discovery (and rebuilds hop
+          // targets) while keeping the same host.
+          IconButton(
+            onPressed:
+                isRunning ? () => c.start(_hostController.text) : null,
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            tooltip: strings.get('retrace'),
+            color: context.textSecondaryColor,
+          ),
+          const SizedBox(width: 4),
+          ElevatedButton.icon(
                 onPressed: isRunning
                     ? c.stop
                     : () => c.start(_hostController.text),

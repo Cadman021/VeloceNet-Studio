@@ -245,5 +245,19 @@
   "discordWebhookUrl": "Discord webhook URL",
   "sendTest": "Send test",
   "webhookTestOk": "Test notification sent",
-  "webhookTestFail": "Test failed — check credentials and connection"
+  "webhookTestFail": "Test failed — check credentials and connection",
+  "alertTemplate": "Message template",
+  "alertTemplateHint": "Placeholders: {icon} {name} {from} {to} {detail}",
+  "proxyTitle": "HTTP proxy (optional)",
+  "proxyHint": "host:port, e.g. 127.0.0.1:8080. HTTP proxies only — SOCKS is not supported.",
+  "trayMinimize": "Minimize to tray on close",
+  "trayShow": "Show",
+  "trayHide": "Hide",
+  "trayQuit": "Quit",
+  "updateAvailable": "Update available",
+  "checkUpdates": "Check for updates",
+  "download": "Download",
+  "upToDate": "You're up to date",
+  "updateCheckFailed": "Couldn't check for updates",
+  "later": "Later"
 }

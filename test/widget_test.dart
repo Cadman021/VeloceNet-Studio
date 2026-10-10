@@ -5,8 +5,7 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
-import 'dart:ui';
-
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:netstudio/core/i18n/app_strings.dart';
@@ -14,9 +13,21 @@ import 'package:netstudio/core/settings/settings_controller.dart';
 import 'package:netstudio/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Empty stand-in for the OS credential store. NOTE (hard-won): an
+/// UNMOCKED plugin channel hangs widget tests forever instead of throwing
+/// MissingPluginException — every plugin the app touches at startup needs
+/// a mock here (or a FLUTTER_TEST guard at the call site, like tray setup).
+void _mockSecureStorage() {
+  const channel =
+      MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(channel, (call) async => null);
+}
+
 void main() {
   testWidgets('NetStudio app smoke test', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
+    _mockSecureStorage();
     await AppStrings.ensureLoaded();
     final settings = SettingsController();
     await settings.load();

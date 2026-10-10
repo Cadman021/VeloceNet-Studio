@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.3.0](https://img.shields.io/badge/release-v1.3.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0)
+[![Release v1.4.0](https://img.shields.io/badge/release-v1.4.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -39,9 +39,9 @@ Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp end
 |---|---|
 | ![DNS Lookup](docs/screenshots/09-dns.png) | ![Uptime history](docs/screenshots/10-uptime-history.png) |
 
-| MTR |
-|---|
-| ![MTR](docs/screenshots/11-mtr.png) |
+| MTR | Update prompt |
+|---|---|
+| ![MTR](docs/screenshots/11-mtr.png) | ![Update dialog](docs/screenshots/12-update-dialog.png) |
 
 ## Features
 
@@ -52,13 +52,15 @@ Live latency matrix (ICMP / TCP), visual traceroute, bandwidth monitor, Warp end
 - **Warp Scanner** — WireGuard-style UDP probe + TCP fallback, ranking, copy-to-clipboard, one-click add to Ping Matrix.
 - **Port Scanner** — TCP sweep with port-list specs (`80,443,8000-8010`), open/closed/filtered states, service guesses.
 - **DNS Lookup** — raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server, with NXDOMAIN distinction and query-time display.
-- **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English), plus Telegram/Discord alert webhooks with test buttons.
+- **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English), plus Telegram/Discord alert webhooks (DPAPI-protected secrets on Windows) with test buttons.
+- **System tray** — close minimizes to the tray while monitoring continues; Show/Hide/Quit menu, toggleable in Settings.
+- **Update checker** — daily GitHub Releases poll with a startup prompt dialog (Download/Later, once per version) and manual check in Settings.
 - **Resilient engine** — if the Rust `.dll`/`.so` isn't built, the app automatically uses the Dart fallback prober so the UI stays usable.
 
-## Download (v1.3.0)
+## Download (v1.4.0)
 
 No build needed — pick your platform from the
-[v1.3.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0):
+[v1.4.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0):
 
 | Platform | File | Run |
 |---|---|---|

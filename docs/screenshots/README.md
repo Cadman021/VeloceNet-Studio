@@ -15,5 +15,6 @@ The main [README](../../README.md) embeds these files:
 | `09-dns.png` | DNS Lookup with A-record results for a domain | 1600×900 |
 | `10-uptime-history.png` | Per-target 24h history dialog (hourly bars + outage list) | 1600×900 |
 | `11-mtr.png` | MTR tab mid-monitoring (several hops with loss/avg stats) | 1600×900 |
+| `12-update-dialog.png` | Startup update prompt (spoof `kAppVersion` low to trigger, then revert) | 1600×900 |
 
 How to capture: run `flutter run -d windows`, switch theme/language in Settings, press <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, save the PNG under the exact name above, then commit.

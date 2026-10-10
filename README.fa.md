@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.3.0](https://img.shields.io/badge/release-v1.3.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0)
+[![Release v1.4.0](https://img.shields.io/badge/release-v1.4.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -53,12 +53,14 @@
 - **اسکنر پورت** — سوییپ TCP با مشخصات لیست پورت (`80,443,8000-8010`)، وضعیت‌های باز/بسته/فیلترشده، حدس سرویس.
 - **جست‌وجوی DNS** — کلاینت خام UDP برای رکوردهای A/AAAA/MX/TXT/NS/CNAME/SOA روی Cloudflare/Google/Quad9 یا سرور سفارشی، با تفکیک NXDOMAIN و نمایش زمان پرس‌وجو.
 - **تنظیمات** — تم روشن / تیره / سیستمی + زبان انگلیسی / فارسی / روسی / چینی، ذخیره‌شده با `shared_preferences` (پیش‌فرض: انگلیسی)، به‌علاوه وب‌هوک‌های هشدار تلگرام/دیسکورد با دکمه تست.
+- **سینی سیستم** — بستن پنجره را به کمینه‌شدن در tray می‌برد و مانیتورینگ ادامه پیدا می‌کند؛ منوی نمایش/پنهان/خروج، قابل خاموش‌کردن در تنظیمات.
+- **بررسی به‌روزرسانی** — نظرسنجی روزانه ریلیزهای گیت‌هاب با دیالوگ شروع (دانلود/بعداً، برای هر نسخه فقط یک بار) و بررسی دستی در تنظیمات.
 - **انجین تاب‌آور** — اگر `.dll`/`.so` راست بیلد نشده باشد، برنامه خودکار با پروبر پشتیبان Dart کار می‌کند تا رابط کاربری همیشه قابل استفاده بماند.
 
-## دانلود (v1.3.0)
+## دانلود (v1.4.0)
 
 بدون نیاز به بیلد — پلتفرم خود را از
-[ریلیز v1.3.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0) بگیرید:
+[ریلیز v1.4.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0) بگیرید:
 
 | پلتفرم | فایل | اجرا |
 |---|---|---|

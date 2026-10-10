@@ -245,5 +245,19 @@
   "discordWebhookUrl": "URL Discord-вебхука",
   "sendTest": "Отправить тест",
   "webhookTestOk": "Тестовое сообщение отправлено",
-  "webhookTestFail": "Тест не удался — проверьте доступы и соединение"
+  "webhookTestFail": "Тест не удался — проверьте доступы и соединение",
+  "alertTemplate": "Шаблон сообщения",
+  "alertTemplateHint": "Плейсхолдеры: {icon} {name} {from} {to} {detail}",
+  "proxyTitle": "HTTP-прокси (необязательно)",
+  "proxyHint": "в формате host:port, напр. 127.0.0.1:8080. Только HTTP-прокси — SOCKS не поддерживается.",
+  "trayMinimize": "Сворачивать в трей при закрытии",
+  "trayShow": "Показать",
+  "trayHide": "Скрыть",
+  "trayQuit": "Выйти",
+  "updateAvailable": "Доступно обновление",
+  "checkUpdates": "Проверить обновления",
+  "download": "Скачать",
+  "upToDate": "У вас последняя версия",
+  "updateCheckFailed": "Не удалось проверить обновления",
+  "later": "Позже"
 }

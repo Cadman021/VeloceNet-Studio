@@ -222,11 +222,22 @@ class UptimeHistoryService {
 
   Future<void> _saveDay(
       String day, Map<int, List<MinuteBucket>> table) async {
+    // Atomic write: a crash/kill mid-flush must never leave a truncated
+    // day file behind (that would silently erase the whole day). Write to
+    // a temp sibling, then move it over the target.
     try {
-      final file = File('${_dir!.path}${Platform.pathSeparator}$day.json');
+      final dir = _dir!.path;
+      final target =
+          File('$dir${Platform.pathSeparator}$day.json');
+      final tmp =
+          File('$dir${Platform.pathSeparator}$day.json.tmp');
       final encoded = table.map((k, v) =>
           MapEntry('$k', v.map((b) => b.toJson()).toList()));
-      await file.writeAsString(jsonEncode(encoded), flush: true);
+      await tmp.writeAsString(jsonEncode(encoded), flush: true);
+      if (await target.exists()) {
+        await target.delete();
+      }
+      await tmp.rename(target.path);
     } catch (e) {
       debugPrint('Uptime history write failed ($day): $e');
     }

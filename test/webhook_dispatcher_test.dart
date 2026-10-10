@@ -35,6 +35,22 @@ void main() {
       expect(msg, contains('🟢'));
       expect(msg, contains('offline → online'));
     });
+
+    test('custom template arranges placeholders', () {
+      final msg = formatAlertMessage(
+        _event(1, TargetStatus.online, TargetStatus.offline),
+        template: '[{to}] {name} was {from}',
+      );
+      expect(msg, '[offline] web was online');
+    });
+
+    test('empty template falls back to default', () {
+      final msg = formatAlertMessage(
+        _event(1, TargetStatus.online, TargetStatus.offline),
+        template: '   ',
+      );
+      expect(msg, contains('[VeloceNet]'));
+    });
   });
 
   group('WebhookDispatcher', () {
@@ -111,6 +127,19 @@ void main() {
       expect(calls, 4); // 2 channels x 2 accepted sends
       dispatcher.dispose();
       log.dispose();
+    });
+
+    test('proxy directive parsing', () {
+      expect(
+          buildProxyDirective(enabled: false, address: '127.0.0.1:8080'),
+          isNull);
+      expect(
+          buildProxyDirective(enabled: true, address: '127.0.0.1:8080'),
+          'PROXY 127.0.0.1:8080');
+      expect(buildProxyDirective(enabled: true, address: 'no-port'),
+          isNull);
+      expect(buildProxyDirective(enabled: true, address: 'h:99999'), isNull);
+      expect(buildProxyDirective(enabled: true, address: ''), isNull);
     });
 
     test('disabled channels send nothing', () async {

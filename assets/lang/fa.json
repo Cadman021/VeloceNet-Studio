@@ -245,5 +245,19 @@
   "discordWebhookUrl": "آدرس وب‌هوک دیسکورد",
   "sendTest": "ارسال تست",
   "webhookTestOk": "پیام تست ارسال شد",
-  "webhookTestFail": "تست ناموفق بود — دسترسی‌ها و اتصال را بررسی کنید"
+  "webhookTestFail": "تست ناموفق بود — دسترسی‌ها و اتصال را بررسی کنید",
+  "alertTemplate": "قالب پیام",
+  "alertTemplateHint": "متغیرها: {icon} {name} {from} {to} {detail}",
+  "proxyTitle": "پروکسی HTTP (اختیاری)",
+  "proxyHint": "به شکل host:port مثلاً 127.0.0.1:8080. فقط پروکسی HTTP — SOCKS پشتیبانی نمی‌شود.",
+  "trayMinimize": "رفتن به سینی سیستم هنگام بستن",
+  "trayShow": "نمایش",
+  "trayHide": "پنهان کردن",
+  "trayQuit": "خروج",
+  "updateAvailable": "به‌روزرسانی موجود است",
+  "checkUpdates": "بررسی به‌روزرسانی",
+  "download": "دانلود",
+  "upToDate": "شما به‌روز هستید",
+  "updateCheckFailed": "بررسی به‌روزرسانی ناموفق بود",
+  "later": "فعلا نه"
 }

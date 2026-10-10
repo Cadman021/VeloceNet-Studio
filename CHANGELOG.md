@@ -9,6 +9,21 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Nothing yet — see `main` for work toward the next release.
 
+## [1.4.0] — 2026-10-10
+
+### Added
+- Update checker: daily-throttled GitHub Releases poll shortly after startup plus a manual check in Settings → About, with a download action when a newer tag exists. Silent on failure; no new dependencies.
+- Update prompt dialog on startup: version comparison, release-notes preview and Download/Later actions, shown at most once per released version.
+- Webhook secrets moved out of plaintext prefs into DPAPI-protected storage on Windows (see Fixed below), with one-time migration; all secret-store calls are timeout-bounded and degrade gracefully.
+- System tray mode (tray_manager + window_manager): tray icon with Show/Hide/Quit menu, close-to-tray while monitoring continues, toggleable in Settings. Best-effort everywhere: no tray support (or widget tests) never breaks the app.
+- Alert message templates: user-editable format with {icon} {name} {from} {to} {detail} placeholders (status words stay English enum names so messages remain greppable).
+- HTTP proxy support for webhook delivery (`host:port`, persisted; SOCKS explicitly out of scope — Dart's HttpClient only speaks HTTP CONNECT).
+- Uptime history dialog now navigates all 7 retained days (was: last 24h only); day files are written atomically (temp + rename) so a mid-flush crash can't erase a day.
+- MTR re-trace button: restarts discovery on the same host so route changes don't leave stale hops monitored forever.
+
+### Fixed
+- Dropped `flutter_secure_storage`: its Windows backend needs ATL headers (`atlstr.h`) missing from default Visual Studio installs, which broke `flutter run`/`flutter build windows` outright. Webhook secrets now use DPAPI-via-FFI on Windows (same user-scope protection as Credential Manager, zero native deps) with a `SecretStore` abstraction for future Keychain/libsecret backends.
+
 ## [1.3.0] — 2026-10-08
 
 ### Added
@@ -22,6 +37,7 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 - Server backup: versioned JSON export of the target list plus paste-to-import with hardened validation (bad hosts/ports skipped, ids reassigned collision-free, 500-entry cap). Import/export lives in the matrix toolbar menu.
 - Community health files: `CODE_OF_CONDUCT.md` (Contributor Covenant), `SECURITY.md` (supported versions + private reporting), and a PR template wired to this repo's checklist.
 - Heatmap accessibility (thanks @ayanesato, PR #8): localized LOSS badge plus screen-reader labels in all four locales, with widget/semantics tests.
+- DNS Lookup tab: raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server IP, with NXDOMAIN distinction, query-time display and zone-copy. Fully localized (en/fa/ru/zh) and theme-aware.
 
 ### Fixed
 - Windows ICMP targets no longer silently fall back to TCP on failure (mixed fake stats, doubled timeouts); the TCP fallback now runs only where native ICMP is unavailable (non-Windows).
@@ -47,9 +63,6 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 - Non-Windows lints fixed (`c_void`/`size_of` imports gated to Windows, unused `host` renamed in the ICMP stub) and CI gained an Ubuntu clippy+test job so the `#[cfg(not(windows))]` paths can never rot silently again.
 - Warp scans now publish live progress (tested/succeeded/failed counts plus incremental results) instead of staying at 0% until completion.
 - Warp endpoints resolve via explicit IP parsing with family-matched socket binding — IPv6 targets (e.g. `[::1]:443`) actually work now instead of timing out; bare unbracketed IPv6 stays rejected (port ambiguity).
-
-### Added
-- DNS Lookup tab: raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server IP, with NXDOMAIN distinction, query-time display and zone-copy. Fully localized (en/fa/ru/zh) and theme-aware.
 
 ## [1.1.0] — 2026-09-24
 
@@ -98,7 +111,8 @@ First public release.
 - Native metrics polling interval 200 ms → 500 ms (less UI-thread JSON pressure); `print` → `debugPrint` in the engine service.
 - Rank medals (🥇🥈🥉) replaced with text ranks (`#1`, `#2`, …) for font/i18n safety.
 
-[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.1.0

@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.3.0](https://img.shields.io/badge/release-v1.3.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0)
+[![Release v1.4.0](https://img.shields.io/badge/release-v1.4.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -53,12 +53,14 @@
 - **Сканер портов** — TCP-перебор по списку (`80,443,8000-8010`), статусы открыт/закрыт/фильтруется, угадывание сервисов.
 - **DNS-запросы** — чистый UDP-клиент для записей A/AAAA/MX/TXT/NS/CNAME/SOA через Cloudflare/Google/Quad9 или свой сервер, с различением NXDOMAIN и показом времени запроса.
 - **Настройки** — тема светлая / тёмная / системная + язык English / فارسی / Русский / 中文, сохраняются через `shared_preferences` (по умолчанию English), плюс вебхуки оповещений Telegram/Discord с кнопками теста.
+- **Системный трей** — закрытие окна сворачивает в трей, мониторинг продолжается; меню Показать/Скрыть/Выйти, отключается в настройках.
+- **Проверка обновлений** — ежедневный опрос GitHub Releases с диалогом при старте (Скачать/Позже, один раз на версию) и ручной проверкой в настройках.
 - **Живучий движок** — если `.dll`/`.so` Rust не собран, приложение автоматически работает на резервном пробере Dart, так что UI доступен всегда.
 
-## Скачать (v1.3.0)
+## Скачать (v1.4.0)
 
 Собирать ничего не нужно — выберите платформу в
-[релизе v1.3.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0):
+[релизе v1.4.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0):
 
 | Платформа | Файл | Запуск |
 |---|---|---|

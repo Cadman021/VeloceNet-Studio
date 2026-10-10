@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.3.0](https://img.shields.io/badge/release-v1.3.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0)
+[![Release v1.4.0](https://img.shields.io/badge/release-v1.4.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -53,12 +53,14 @@
 - **端口扫描器** — 按端口列表扫描 (`80,443,8000-8010`)，开放/关闭/已过滤三种状态、服务推测。
 - **DNS 查询** — 原始 UDP 客户端，支持 A/AAAA/MX/TXT/NS/CNAME/SOA，可使用 Cloudflare/Google/Quad9 或自定义服务器，区分 NXDOMAIN 并显示查询耗时。
 - **设置** — 浅色 / 深色 / 跟随系统主题 + 英语 / 波斯语 / 俄语 / 中文语言，通过 `shared_preferences` 持久化 (默认英语)，以及带测试按钮的 Telegram/Discord 告警 Webhook。
+- **系统托盘** — 关闭窗口时最小化到托盘，监控继续运行；显示/隐藏/退出菜单，可在设置中关闭。
+- **更新检查** — 每日轮询 GitHub Releases，启动时弹窗提示 (下载/稍后，每个版本仅一次)，设置中可手动检查。
 - **弹性引擎** — 如果 Rust 的 `.dll`/`.so` 尚未构建，程序会自动使用 Dart 备用探测器，保证界面始终可用。
 
-## 下载 (v1.3.0)
+## 下载 (v1.4.0)
 
 无需构建 — 从
-[v1.3.0 发布页](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0)选择你的平台：
+[v1.4.0 发布页](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0)选择你的平台：
 
 | 平台 | 文件 | 运行 |
 |---|---|---|

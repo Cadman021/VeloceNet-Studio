@@ -35,7 +35,9 @@ class UptimeHistoryDialog extends StatefulWidget {
 }
 
 class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
-  late final Future<_DayView> _future;
+  /// 0 = today (UTC), 1 = yesterday, … up to retention - 1.
+  int _dayOffset = 0;
+  late Future<_DayView> _future;
 
   @override
   void initState() {
@@ -43,19 +45,31 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
     _future = _load();
   }
 
+  DateTime get _day =>
+      DateTime.now().toUtc().subtract(Duration(days: _dayOffset));
+
+  String get _dayLabel {
+    final d = _day;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
+  }
+
+  void _shiftDay(int delta) {
+    final next = (_dayOffset + delta)
+        .clamp(0, UptimeHistoryService.retentionDays - 1);
+    if (next == _dayOffset) return;
+    setState(() {
+      _dayOffset = next;
+      _future = _load();
+    });
+  }
+
   Future<_DayView> _load() async {
-    final now = DateTime.now().toUtc();
-    final all = <MinuteBucket>[];
-    for (int d = 0; d < 2; d++) {
-      all.addAll(await widget.history.bucketsFor(
-        widget.target.id,
-        now.subtract(Duration(days: d)),
-      ));
-    }
-    all.sort((a, b) => a.minute.compareTo(b.minute));
-    final cutoff = now.millisecondsSinceEpoch ~/ 60000 - 24 * 60;
-    final window = all.where((b) => b.minute >= cutoff).toList();
-    return _DayView.fromBuckets(window);
+    final day = _day;
+    final buckets =
+        await widget.history.bucketsFor(widget.target.id, day);
+    buckets.sort((a, b) => a.minute.compareTo(b.minute));
+    return _DayView.fromBuckets(buckets, day);
   }
 
   Color _hourColor(_HourSummary s, BuildContext context) {
@@ -156,6 +170,37 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
                       children: [
                         Row(
                           children: [
+                            IconButton(
+                              icon: const Icon(
+                                  Icons.chevron_left_rounded, size: 20),
+                              color: _dayOffset >=
+                                      UptimeHistoryService.retentionDays - 1
+                                  ? context.textMutedColor
+                                      .withValues(alpha: 0.3)
+                                  : context.textSecondaryColor,
+                              tooltip: '−1',
+                              onPressed: () => _shiftDay(1),
+                            ),
+                            Text(
+                              _dayLabel,
+                              style: TextStyle(
+                                color: context.textPrimaryColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.chevron_right_rounded,
+                                  size: 20),
+                              color: _dayOffset <= 0
+                                  ? context.textMutedColor
+                                      .withValues(alpha: 0.3)
+                                  : context.textSecondaryColor,
+                              tooltip: '+1',
+                              onPressed: () => _shiftDay(-1),
+                            ),
+                            const Spacer(),
                             Text(
                               '${strings.get('uptime24h')}: ${view.uptimePct.toStringAsFixed(1)}%',
                               style: TextStyle(
@@ -300,10 +345,8 @@ class _DayView {
   DateTime hourStart(int h) =>
       windowStart.add(Duration(hours: h));
 
-  factory _DayView.fromBuckets(List<MinuteBucket> buckets) {
-    final now = DateTime.now().toUtc();
-    final windowStart = DateTime.utc(now.year, now.month, now.day, now.hour)
-        .subtract(const Duration(hours: 23));
+  factory _DayView.fromBuckets(List<MinuteBucket> buckets, DateTime day) {
+    final windowStart = DateTime.utc(day.year, day.month, day.day);
     final hours = List<_HourSummary?>.filled(24, null);
     int online = 0;
     int total = 0;

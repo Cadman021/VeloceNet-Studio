@@ -29,6 +29,14 @@ cargo clippy --release -- -D warnings
 
 CI (`.github/workflows/ci.yml`) runs exactly these checks on Windows **and** Ubuntu (the Linux job compiles the `#[cfg(not(windows))]` paths — keep both green).
 
+> Widget-test gotcha (hard-won): an **unmocked** plugin method channel hangs
+> `testWidgets` forever instead of throwing `MissingPluginException`. Every
+> plugin the app touches at startup (secure storage today; window/tray are
+> guarded by `FLUTTER_TEST`) needs a mock in widget tests — see the
+> `_mockSecureStorage` helper in `test/widget_test.dart`. All plugin calls
+> on startup paths must also be timeout-bounded, so a wedged OS service
+> delays boot by seconds instead of hanging it.
+
 ## Project conventions
 
 - **i18n:** user-visible strings go through `AppStrings` (`lib/core/i18n/app_strings.dart`) with both `en` and `fa` entries. No hardcoded Persian/English in widgets.

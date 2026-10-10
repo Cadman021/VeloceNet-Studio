@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:tray_manager/tray_manager.dart';
+import 'package:window_manager/window_manager.dart';
 import '../core/i18n/app_strings.dart';
 import '../core/theme/theme_x.dart';
 import '../core/settings/settings_controller.dart';
@@ -13,6 +16,7 @@ import 'mtr/mtr_screen.dart';
 import 'ping_matrix/ping_matrix_screen.dart';
 import 'portscan/portscan_screen.dart';
 import 'settings/settings_screen.dart';
+import 'settings/update_available_dialog.dart';
 import 'traceroute/traceroute_screen.dart';
 import 'warp/warp_controller.dart';
 import 'warp/warp_screen.dart';
@@ -25,11 +29,15 @@ class MainShellView extends StatefulWidget {
   State<MainShellView> createState() => _MainShellViewState();
 }
 
-class _MainShellViewState extends State<MainShellView> {
+class _MainShellViewState extends State<MainShellView>
+    with WindowListener {
   int _selectedIndex = 0;
   late final PingMatrixController _pingController;
   late final WarpController _warpController;
   late final WebhookDispatcher _webhooks;
+  bool _trayReady = false;
+  TrayIcon? _trayIcon;
+  Timer? _updateCheckTimer;
 
   @override
   void initState() {
@@ -47,16 +55,153 @@ class _MainShellViewState extends State<MainShellView> {
         telegramChatId: widget.settings.telegramChatId,
         discordEnabled: widget.settings.discordEnabled,
         discordUrl: widget.settings.discordUrl,
+        template: widget.settings.webhookTemplate.isEmpty
+            ? kDefaultAlertTemplate
+            : widget.settings.webhookTemplate,
+        proxyDirective: buildProxyDirective(
+          enabled: widget.settings.proxyEnabled,
+          address: widget.settings.proxyAddress,
+        ),
       ),
     );
+    widget.settings.addListener(_onSettingsChanged);
+    _setupTray();
+    // Daily-throttled update check, delayed so it never contends with
+    // first-frame work. Failures stay silent (see _UpdateRow for the
+    // manual path); a find surfaces once as a dialog (per released
+    // version) plus persistently in the About section. Cancellable so
+    // widget tests (and fast quits) never see a pending timer.
+    _updateCheckTimer = Timer(const Duration(seconds: 8), () async {
+      if (!mounted) return;
+      await widget.settings.checkForUpdates();
+      if (!mounted) return;
+      await UpdateAvailableDialog.showIfNeeded(context, widget.settings);
+    });
   }
 
   @override
   void dispose() {
+    _updateCheckTimer?.cancel();
+    widget.settings.removeListener(_onSettingsChanged);
+    _teardownTray();
     _webhooks.dispose();
     _pingController.dispose();
     _warpController.dispose();
     super.dispose();
+  }
+
+  /// Applies tray on/off transitions at runtime (toggle lives in Settings).
+  void _onSettingsChanged() {
+    if (!mounted) return;
+    if (widget.settings.trayEnabled && !_trayReady) {
+      _setupTray();
+    } else if (!widget.settings.trayEnabled && _trayReady) {
+      _teardownTray();
+    } else if (widget.settings.trayEnabled) {
+      _refreshTrayMenu();
+    }
+  }
+
+  /// Best-effort tray setup (tray_manager 0.8 native API): any step may
+  /// throw on platforms without tray support (or in widget tests without
+  /// plugins) — the app must work the same without it.
+  Future<void> _setupTray() async {
+    if (!widget.settings.trayEnabled || _trayIcon != null) return;
+    // Widget tests have no window/tray plugins: some plugin calls never
+    // complete there (instead of throwing), which would hang pumpWidget.
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return;
+    try {
+      await windowManager.ensureInitialized();
+      final icon = TrayIcon.create();
+      if (icon == null) return; // tray not supported here
+      // The PNG must be a bundled flutter asset (see pubspec); a missing
+      // asset yields a null image and an invisible icon.
+      final image = ImageAsset.fromAsset('assets/icons/app_icon.png');
+      if (image == null) return;
+      _trayIcon = icon;
+      icon.icon = image;
+      icon.setTooltip('VeloceNet-Studio');
+      // New icons start hidden — without this the tray entry exists but
+      // is never shown.
+      icon.setVisible(true);
+      icon.addListener((event) {
+        if (event is TrayIconClickedEvent) _toggleWindow();
+      });
+      await windowManager.setPreventClose(true);
+      windowManager.removeListener(this);
+      windowManager.addListener(this);
+      _trayReady = true;
+      await _refreshTrayMenu();
+    } catch (_) {
+      _trayIcon = null;
+      _trayReady = false;
+    }
+  }
+
+  Future<void> _refreshTrayMenu() async {
+    final icon = _trayIcon;
+    if (icon == null ||
+        !_trayReady ||
+        !widget.settings.trayEnabled) {
+      return;
+    }
+    try {
+      final strings = AppStrings(widget.settings.locale);
+      final visible = await windowManager.isVisible();
+      final menu = Menu.create();
+      if (menu == null) return;
+      final toggle = MenuItem.createWithLabelAndType(
+        visible ? strings.get('trayHide') : strings.get('trayShow'),
+        MenuItemType.normal,
+      );
+      toggle?.addListener((event) {
+        if (event is MenuItemClickedEvent) _toggleWindow();
+      });
+      if (toggle != null) menu.addItem(toggle);
+      menu.addSeparator();
+      final quit = MenuItem.createWithLabelAndType(
+        strings.get('trayQuit'),
+        MenuItemType.normal,
+      );
+      quit?.addListener((event) {
+        if (event is MenuItemClickedEvent) windowManager.destroy();
+      });
+      if (quit != null) menu.addItem(quit);
+      icon.setContextMenu(menu);
+    } catch (_) {}
+  }
+
+  Future<void> _teardownTray() async {
+    _trayReady = false;
+    try {
+      windowManager.removeListener(this);
+      await windowManager.setPreventClose(false);
+      _trayIcon?.dispose();
+    } catch (_) {}
+    _trayIcon = null;
+  }
+
+  Future<void> _toggleWindow() async {
+    try {
+      if (await windowManager.isVisible()) {
+        await windowManager.hide();
+      } else {
+        await windowManager.show();
+      }
+      await _refreshTrayMenu();
+    } catch (_) {}
+  }
+
+  @override
+  void onWindowClose() async {
+    // With tray mode, closing hides to the tray (monitoring continues);
+    // otherwise the window really closes.
+    if (!widget.settings.trayEnabled) {
+      await windowManager.destroy();
+      return;
+    }
+    await windowManager.hide();
+    await _refreshTrayMenu();
   }
 
   void _addWarpEndpointsToMatrix(List<Map<String, dynamic>> endpoints) {

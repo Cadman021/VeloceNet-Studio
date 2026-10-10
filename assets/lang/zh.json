@@ -245,5 +245,19 @@
   "discordWebhookUrl": "Discord Webhook URL",
   "sendTest": "发送测试",
   "webhookTestOk": "测试消息已发送",
-  "webhookTestFail": "测试失败 — 请检查凭据和连接"
+  "webhookTestFail": "测试失败 — 请检查凭据和连接",
+  "alertTemplate": "消息模板",
+  "alertTemplateHint": "占位符：{icon} {name} {from} {to} {detail}",
+  "proxyTitle": "HTTP 代理 (可选)",
+  "proxyHint": "格式为 host:port，例如 127.0.0.1:8080。仅支持 HTTP 代理 — 不支持 SOCKS。",
+  "trayMinimize": "关闭时最小化到托盘",
+  "trayShow": "显示",
+  "trayHide": "隐藏",
+  "trayQuit": "退出",
+  "updateAvailable": "有可用更新",
+  "checkUpdates": "检查更新",
+  "download": "下载",
+  "upToDate": "已是最新版本",
+  "updateCheckFailed": "无法检查更新",
+  "later": "稍后"
 }
