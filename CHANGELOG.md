@@ -7,22 +7,27 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- Update checker honors the configured webhook proxy, skips pre-release tags (defense in depth — the API already excludes them), and can be opted out entirely via a Settings toggle (manual checks always run).
-
-### Fixed
-- Tray on Linux without an appindicator host no longer hides into a ghost process: close falls through to a real quit when no tray icon materialized. Documented the `libayatana-appindicator` requirement in README.
+- Nothing yet — see `main` for work toward the next release.
 
 ## [1.4.0] — 2026-10-10
 
 ### Added
-- Update checker: daily-throttled GitHub Releases poll shortly after startup plus a manual check in Settings → About, with a download action when a newer tag exists. Silent on failure; no new dependencies.
+- Update checker: daily-throttled GitHub Releases poll shortly after startup plus a manual check in Settings → About, with a download action when a newer tag exists. Honors the configured webhook proxy, skips pre-release tags, and can be opted out entirely (manual checks always run). Silent on failure; no new dependencies.
 - Update prompt dialog on startup: version comparison, release-notes preview and Download/Later actions, shown at most once per released version.
-- Webhook secrets moved out of plaintext prefs into DPAPI-protected storage on Windows, with one-time migration; all secret-store calls are timeout-bounded and degrade gracefully.
 - System tray mode (tray_manager + window_manager): tray icon with Show/Hide/Quit menu, close-to-tray while monitoring continues, toggleable in Settings. Best-effort everywhere: no tray support (or widget tests) never breaks the app.
 - Alert message templates: user-editable format with {icon} {name} {from} {to} {detail} placeholders (status words stay English enum names so messages remain greppable).
 - HTTP proxy support for webhook delivery (`host:port`, persisted; SOCKS explicitly out of scope — Dart's HttpClient only speaks HTTP CONNECT).
-- Uptime history dialog now navigates all 7 retained days (was: last 24h only); day files are written atomically (temp + rename) so a mid-flush crash can't erase a day.
+- Uptime history dialog now navigates all 7 retained days (was: last 24h only).
 - MTR re-trace button: restarts discovery on the same host so route changes don't leave stale hops monitored forever.
+
+### Changed
+- Uptime day files are written atomically (temp + rename) so a mid-flush crash can't erase a day.
+
+### Fixed
+- Tray on Linux without an appindicator host no longer hides into a ghost process: close falls through to a real quit when no tray icon materialized.
+
+### Security
+- Webhook secrets moved out of plaintext prefs into DPAPI-protected storage on Windows, with one-time migration; all secret-store calls are timeout-bounded and degrade gracefully. Linux/macOS still store them as plaintext in the app preferences — a documented limitation, see SECURITY.md.
 
 ## [1.3.0] — 2026-10-08
 
