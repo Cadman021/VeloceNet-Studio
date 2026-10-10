@@ -259,5 +259,6 @@
   "download": "دانلود",
   "upToDate": "شما به‌روز هستید",
   "updateCheckFailed": "بررسی به‌روزرسانی ناموفق بود",
-  "later": "فعلا نه"
+  "later": "بعداً",
+  "autoUpdateCheck": "بررسی خودکار به‌روزرسانی"
 }

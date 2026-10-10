@@ -6,8 +6,8 @@ Only the latest minor release line receives security fixes:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.1.x   | :white_check_mark: |
-| < 1.1   | :x:                |
+| 1.4.x   | :white_check_mark: |
+| < 1.4   | :x:                |
 
 If you are stuck on an older release, the fix will land on `main` — please
 upgrade to the latest release to receive it.
@@ -32,6 +32,21 @@ profile at <https://github.com/Cadman021> instead of filing a public issue.
   timeline with you before any public details.
 - Credit in the release notes / `CHANGELOG.md` if you wish.
 
+## Credential Storage Disclosure
+
+The app stores three webhook secrets (Telegram bot token, Telegram chat ID,
+Discord webhook URL) so alerts keep working across restarts:
+
+- **Windows:** DPAPI-protected (current-user scope) via direct `crypt32`
+  calls — no plaintext on disk. This is the same primitive Credential
+  Manager is built on.
+- **Linux / macOS:** plaintext in the app's preferences file. This is a
+  known, accepted limitation — not an oversight. macOS Keychain and Linux
+  libsecret backends are tracked follow-up work, tracked in the open
+  issues. A report that merely restates this paragraph is out of scope;
+  a working exploit that exfiltrates secrets *without* local user-level
+  access is in scope.
+
 ## Scope Notes
 
 This project ships a native networking engine. Reports most valuable to us:
@@ -39,7 +54,7 @@ This project ships a native networking engine. Reports most valuable to us:
 - Unsafe FFI handling (invalid pointers, string lifetimes, panics crossing FFI).
 - DLL/search-path hijacking in the native library loader.
 - Input validation gaps where user input reaches sockets, processes, or FFI.
-- Secret handling (there should be none — the app stores no credentials).
+- Secret handling flaws beyond the disclosed platform gap above.
 
 Out of scope: reports that the app performs network probing at all (that is
 its documented purpose), or vulnerabilities in Flutter/Rust toolchains

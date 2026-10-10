@@ -130,6 +130,8 @@ docs/screenshots/               # images used above
 - No cwd/`PATH` DLL probing; missing engine → Dart fallback (never a crash).
 - Warp scan input capped (256 KB / 4096 endpoints); IPv6 handled explicitly (bracketed `[::1]:port`).
 - Per-process bandwidth is a **connection-share estimate** (Windows exposes no per-PID byte counters without ETW) — the UI labels it as such.
+- Webhook secrets (Telegram token/chat ID, Discord URL) are DPAPI-protected on Windows and plaintext in the app preferences on Linux/macOS — a known, documented limitation, see [SECURITY.md](SECURITY.md).
+- Linux tray needs an appindicator host (`libayatana-appindicator` on GNOME); without one the app keeps running normally but close-to-tray is disabled automatically.
 
 ## Contributing
 

@@ -49,6 +49,21 @@ void main() {
       expect(info.notes, 'notes here');
     });
 
+    test('pre-release tags are skipped, never offered', () async {
+      for (final tag in ['v1.5.0-rc.1', 'v2.0.0-beta', 'v1.5.0-1']) {
+        expect(
+          await fetchLatestRelease(
+            client: MockClient((_) async => http.Response(
+              '{"tag_name": "$tag", "html_url": "https://x/y"}',
+              200,
+            )),
+          ),
+          isNull,
+          reason: tag,
+        );
+      }
+    });
+
     test('failures yield null, never throw', () async {
       expect(
         await fetchLatestRelease(

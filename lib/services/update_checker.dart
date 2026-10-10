@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 /// Update discovery via the GitHub Releases API. No new dependencies
 /// (package:http was already in use for webhooks).
@@ -46,15 +48,32 @@ int compareVersions(String a, String b) {
   return 0;
 }
 
+/// Builds an HTTP client honoring an optional `PROXY host:port` directive
+/// (same format as the webhook proxy setting). Null directive = direct.
+http.Client clientFor({String? proxyDirective}) {
+  if (proxyDirective == null) return http.Client();
+  final inner = HttpClient()..findProxy = (_) => proxyDirective;
+  return IOClient(inner);
+}
+
 /// Fetches the latest GitHub release. Returns null on any failure
 /// (offline, rate-limited, malformed) — callers treat that as "unknown",
 /// never as an error to surface loudly.
+///
+/// Pre-release tags (`-rc`, `-beta`, …) are skipped even though the
+/// `/releases/latest` endpoint already excludes them: never nag users to
+/// install a release candidate.
 Future<UpdateInfo?> fetchLatestRelease({
   http.Client? client,
   Duration timeout = const Duration(seconds: 10),
+  String? proxyDirective,
 }) async {
-  final c = client ?? http.Client();
+  http.Client? owned;
   try {
+    final c = client ??
+        (owned = proxyDirective != null
+            ? clientFor(proxyDirective: proxyDirective)
+            : http.Client());
     final resp = await c
         .get(
           Uri.parse(kReleasesLatestApi),
@@ -68,7 +87,7 @@ Future<UpdateInfo?> fetchLatestRelease({
     if (tag.startsWith('v') || tag.startsWith('V')) {
       tag = tag.substring(1);
     }
-    if (tag.isEmpty) return null;
+    if (tag.isEmpty || tag.contains('-')) return null;
     return UpdateInfo(
       version: tag,
       url: (decoded['html_url'] ?? kReleasesPageUrl).toString(),
@@ -77,7 +96,7 @@ Future<UpdateInfo?> fetchLatestRelease({
   } catch (_) {
     return null;
   } finally {
-    if (client == null) c.close();
+    owned?.close();
   }
 }
 

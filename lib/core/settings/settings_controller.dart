@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/update_checker.dart';
+import '../../services/webhook_dispatcher.dart'
+    show buildProxyDirective;
 import '../app_info.dart';
 import 'secret_store.dart';
 
@@ -26,6 +28,7 @@ class SettingsController extends ChangeNotifier {
   static const _kProxyEnabled = 'settings.proxyEnabled';
   static const _kProxy = 'settings.proxy';
   static const _kTray = 'settings.tray';
+  static const _kUpdateAuto = 'settings.updateAuto';
   static const _kLastUpdateCheck = 'settings.lastUpdateCheck';
   static const _kKnownLatest = 'settings.knownLatest';
   static const _kKnownNotes = 'settings.knownNotes';
@@ -54,6 +57,9 @@ class SettingsController extends ChangeNotifier {
   // Minimize to the system tray on window close instead of quitting.
   // Monitoring keeps running in the background; Quit lives in the tray menu.
   bool trayEnabled = true;
+  // Automatic (startup) update checks. Manual "check now" taps always run
+  // regardless — this toggle is the offline-friendly opt-out.
+  bool updateCheckEnabled = true;
 
   // Update discovery state. `latestKnownVersion` is null when up to date
   // (or never successfully checked).
@@ -120,6 +126,7 @@ class SettingsController extends ChangeNotifier {
       proxyEnabled = prefs.getBool(_kProxyEnabled) ?? false;
       proxyAddress = prefs.getString(_kProxy) ?? '';
       trayEnabled = prefs.getBool(_kTray) ?? true;
+      updateCheckEnabled = prefs.getBool(_kUpdateAuto) ?? true;
       latestKnownVersion = prefs.getString(_kKnownLatest);
       latestUpdateNotes = prefs.getString(_kKnownNotes) ?? '';
       dismissedUpdateVersion = prefs.getString(_kDismissedUpdate);
@@ -216,23 +223,46 @@ class SettingsController extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<void> setUpdateCheckEnabled(bool value) async {
+    updateCheckEnabled = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kUpdateAuto, updateCheckEnabled);
+    } catch (_) {}
+  }
+
   /// Checks GitHub Releases for a newer version.
   ///
   /// Returns true = update available, false = up to date, null = the check
   /// itself failed (offline/rate-limited). Auto checks are throttled to
-  /// once a day; manual taps pass `force: true`. Never throws.
+  /// once a day and skipped entirely when the user opted out; manual taps
+  /// pass `force: true`. Honors the configured webhook proxy (same one the
+  /// user already trusts for Telegram/Discord). Never throws.
   Future<bool?> checkForUpdates(
       {bool force = false, http.Client? client}) async {
     final now = DateTime.now();
+    bool knownNewer() {
+      return latestKnownVersion != null &&
+          compareVersions(latestKnownVersion!, AppInfo.kAppVersion) > 0;
+    }
+
+    if (!force && !updateCheckEnabled) {
+      return knownNewer();
+    }
     if (!force && !shouldAutoCheck(lastUpdateCheck, now)) {
-      return latestKnownVersion == null
-          ? false
-          : compareVersions(latestKnownVersion!, AppInfo.kAppVersion) > 0;
+      return knownNewer();
     }
     checkingUpdates = true;
     notifyListeners();
     try {
-      final info = await fetchLatestRelease(client: client);
+      final info = await fetchLatestRelease(
+        client: client,
+        proxyDirective: buildProxyDirective(
+          enabled: proxyEnabled,
+          address: proxyAddress,
+        ),
+      );
       lastUpdateCheck = now;
       try {
         final prefs = await SharedPreferences.getInstance();

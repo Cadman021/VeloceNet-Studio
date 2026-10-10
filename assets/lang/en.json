@@ -259,5 +259,6 @@
   "download": "Download",
   "upToDate": "You're up to date",
   "updateCheckFailed": "Couldn't check for updates",
-  "later": "Later"
+  "later": "Later",
+  "autoUpdateCheck": "Automatic update checks"
 }

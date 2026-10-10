@@ -195,8 +195,11 @@ class _MainShellViewState extends State<MainShellView>
   @override
   void onWindowClose() async {
     // With tray mode, closing hides to the tray (monitoring continues);
-    // otherwise the window really closes.
-    if (!widget.settings.trayEnabled) {
+    // otherwise the window really closes. The `_trayReady` check matters
+    // on Linux desktops without an appindicator host: there the tray icon
+    // never materializes, and hiding would leave a ghost process with no
+    // window and no tray entry — so fall through to a real close.
+    if (!widget.settings.trayEnabled || !_trayReady) {
       await windowManager.destroy();
       return;
     }

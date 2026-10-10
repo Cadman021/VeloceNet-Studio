@@ -283,6 +283,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 8),
                     _UpdateRow(settings: settings),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(
+                        strings.get('autoUpdateCheck'),
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      value: settings.updateCheckEnabled,
+                      onChanged: (v) =>
+                          settings.setUpdateCheckEnabled(v),
+                    ),
                     const SizedBox(height: 4),
                     Wrap(
                       crossAxisAlignment: WrapCrossAlignment.center,

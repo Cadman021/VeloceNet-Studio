@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -47,6 +48,28 @@ void main() {
         isTrue,
       );
       expect(settings.shouldShowUpdateDialog, isTrue);
+    });
+
+    test('opted-out auto checks never hit the network', () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = SettingsController();
+      await settings.load();
+      await settings.setUpdateCheckEnabled(false);
+      var called = false;
+      final result = await settings.checkForUpdates(
+        client: MockClient((_) async {
+          called = true;
+          throw const SocketException('must not be called');
+        }),
+      );
+      expect(called, isFalse);
+      expect(result, isFalse);
+      // Manual checks bypass the opt-out.
+      expect(
+        await settings.checkForUpdates(
+            force: true, client: _clientFor('v9.9.9')),
+        isTrue,
+      );
     });
 
     test('up-to-date clears a stale known version', () async {
