@@ -51,8 +51,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tcp_probe_unresolvable_host_fails() {
-        let result =
-            probe::tcp::probe_tcp("nonexistent.invalid", 80, Duration::from_millis(1500)).await;
+        let result = probe::tcp::probe_tcp("bad host name", 80, Duration::from_millis(1500)).await;
         assert!(!result.success);
         assert!(result.error.is_some());
     }

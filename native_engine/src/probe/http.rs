@@ -611,7 +611,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let listener = TcpListener::bind("localhost:0").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
             if let Ok((tcp, _)) = listener.accept() {
@@ -624,7 +624,7 @@ mod tests {
             }
         });
 
-        let res = probe_http_sync("localhost", port, true, "/", 5000);
+        let res = probe_http_sync("127.0.0.1", port, true, "/", 5000);
         assert!(res.success, "probe failed: {:?}", res.error);
         assert_eq!(res.http_status, Some(200));
         let days = res.cert_days_left.expect("cert days missing");
