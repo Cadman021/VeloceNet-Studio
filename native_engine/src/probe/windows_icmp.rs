@@ -73,7 +73,7 @@ pub mod imp {
 
         unsafe {
             let handle: HANDLE = IcmpCreateFile();
-            if handle == INVALID_HANDLE_VALUE || handle == 0 {
+            if handle == INVALID_HANDLE_VALUE || handle.is_null() {
                 return ProbeResult::icmp_unavailable("Failed to open ICMP handle");
             }
 
@@ -138,7 +138,7 @@ pub mod imp {
 
         unsafe {
             let handle: HANDLE = Icmp6CreateFile();
-            if handle == INVALID_HANDLE_VALUE || handle == 0 {
+            if handle == INVALID_HANDLE_VALUE || handle.is_null() {
                 // Treat like "ICMP not permitted": the engine may still probe
                 // over TCP when the target has a port, instead of reporting a
                 // misleading packet loss for a protocol the OS refused.
@@ -155,7 +155,7 @@ pub mod imp {
             // lets the OS pick the outgoing interface.
             let replies_count = Icmp6SendEcho2(
                 handle,
-                0,
+                std::ptr::null_mut(),
                 None,
                 std::ptr::null(),
                 std::ptr::null(),

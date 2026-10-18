@@ -435,7 +435,7 @@ fn read_process_traffic_win(total_up: f64, total_down: f64) -> Vec<ProcessTraffi
     let mut names: HashMap<u32, String> = HashMap::new();
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snap != -1 {
+        if snap != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();
             entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
             if Process32FirstW(snap, &mut entry) != 0 {
