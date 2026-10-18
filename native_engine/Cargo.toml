@@ -31,7 +31,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 [dev-dependencies]
 # Test-only: self-signed certs with a chosen notAfter for the HTTPS probe
 # integration test. Ring backend avoids the aws-lc-rs C toolchain.
-rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 
 # Unprivileged ICMP ("ping") sockets on Linux/macOS:
 # socket(PF_INET, SOCK_DGRAM, IPPROTO_ICMP). socket2 builds/owns the socket
