@@ -102,7 +102,7 @@ impl IcmpSocket {
         let sum = checksum(&packet);
         packet[2..4].copy_from_slice(&sum.to_be_bytes());
 
-        self.sock.set_ttl(ttl as u32)?;
+        self.sock.set_ttl_v4(ttl as u32)?;
         #[cfg(target_os = "linux")]
         drain_error_queue(&self.sock);
 
