@@ -39,7 +39,7 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "rin
 # recvmsg(MSG_ERRQUEUE) on Linux, where TTL-expired replies for unprivileged
 # traceroutes arrive (macOS delivers them as normal datagrams instead).
 [target.'cfg(unix)'.dependencies]
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
