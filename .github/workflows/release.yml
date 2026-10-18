@@ -56,7 +56,7 @@ jobs:
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath velocenet-studio-windows-x64.zip -Force
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-windows-x64
           path: velocenet-studio-windows-x64.zip
@@ -106,7 +106,7 @@ jobs:
           tar -czf velocenet-studio-linux-x64.tar.gz -C build/linux/x64/release/bundle .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-linux-x64
           path: velocenet-studio-linux-x64.tar.gz
@@ -151,7 +151,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP" velocenet-studio-macos-arm64.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-macos-arm64
           path: velocenet-studio-macos-arm64.zip
