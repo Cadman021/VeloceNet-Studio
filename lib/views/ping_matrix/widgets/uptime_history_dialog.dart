@@ -7,7 +7,7 @@ import '../../../models/ping_target.dart';
 import '../../../services/uptime_history.dart';
 
 /// 24-hour history for one target: hourly status bars, uptime % and the
-/// outage list. Data comes from the local rollup store (UTC days).
+/// outage list. Data comes from the local rollup store (local days).
 class UptimeHistoryDialog extends StatefulWidget {
   final PingTarget target;
   final UptimeHistoryService history;
@@ -25,8 +25,7 @@ class UptimeHistoryDialog extends StatefulWidget {
   ) {
     return showDialog(
       context: context,
-      builder: (ctx) =>
-          UptimeHistoryDialog(target: target, history: history),
+      builder: (ctx) => UptimeHistoryDialog(target: target, history: history),
     );
   }
 
@@ -35,7 +34,7 @@ class UptimeHistoryDialog extends StatefulWidget {
 }
 
 class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
-  /// 0 = today (UTC), 1 = yesterday, … up to retention - 1.
+  /// 0 = today (local), 1 = yesterday, … up to retention - 1.
   int _dayOffset = 0;
   late Future<_DayView> _future;
 
@@ -45,8 +44,7 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
     _future = _load();
   }
 
-  DateTime get _day =>
-      DateTime.now().toUtc().subtract(Duration(days: _dayOffset));
+  DateTime get _day => DateTime.now().subtract(Duration(days: _dayOffset));
 
   String get _dayLabel {
     final d = _day;
@@ -55,8 +53,8 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
   }
 
   void _shiftDay(int delta) {
-    final next = (_dayOffset + delta)
-        .clamp(0, UptimeHistoryService.retentionDays - 1);
+    final next =
+        (_dayOffset + delta).clamp(0, UptimeHistoryService.retentionDays - 1);
     if (next == _dayOffset) return;
     setState(() {
       _dayOffset = next;
@@ -66,8 +64,7 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
 
   Future<_DayView> _load() async {
     final day = _day;
-    final buckets =
-        await widget.history.bucketsFor(widget.target.id, day);
+    final buckets = await widget.history.bucketsFor(widget.target.id, day);
     buckets.sort((a, b) => a.minute.compareTo(b.minute));
     return _DayView.fromBuckets(buckets, day);
   }
@@ -171,8 +168,8 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
                         Row(
                           children: [
                             IconButton(
-                              icon: const Icon(
-                                  Icons.chevron_left_rounded, size: 20),
+                              icon: const Icon(Icons.chevron_left_rounded,
+                                  size: 20),
                               color: _dayOffset >=
                                       UptimeHistoryService.retentionDays - 1
                                   ? context.textMutedColor
@@ -268,8 +265,7 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
                           ),
                         for (final o in view.outages)
                           Padding(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 4),
+                            padding: const EdgeInsets.symmetric(vertical: 4),
                             child: Row(
                               children: [
                                 Container(
@@ -324,6 +320,7 @@ class _UptimeHistoryDialogState extends State<UptimeHistoryDialog> {
 class _HourSummary {
   int onlineMinutes = 0;
   int dataMinutes = 0;
+
   /// Worst *bad* status seen this hour (degraded/offline index), or -1.
   int worstBad = -1;
 }
@@ -341,19 +338,21 @@ class _DayView {
     required this.uptimePct,
     required this.windowStart,
   });
-
   DateTime hourStart(int h) =>
-      windowStart.add(Duration(hours: h));
+      DateTime(windowStart.year, windowStart.month, windowStart.day, h);
 
   factory _DayView.fromBuckets(List<MinuteBucket> buckets, DateTime day) {
-    final windowStart = DateTime.utc(day.year, day.month, day.day);
+    // Local midnight: the day file and its 24 hourly bars follow the
+    // user's wall clock, not UTC.
+    final windowStart = DateTime(day.year, day.month, day.day);
     final hours = List<_HourSummary?>.filled(24, null);
     int online = 0;
     int total = 0;
     for (final b in buckets) {
-      final t =
-          DateTime.fromMillisecondsSinceEpoch(b.minute * 60000, isUtc: true);
-      final h = t.difference(windowStart).inHours;
+      final t = DateTime.fromMillisecondsSinceEpoch(b.minute * 60000);
+      // t.hour (not a duration diff) keeps the bars aligned on 23/25-hour
+      // DST transition days.
+      final h = t.hour;
       if (h < 0 || h >= 24) continue;
       total++;
       final s = hours[h] ??= _HourSummary();

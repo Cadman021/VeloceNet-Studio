@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../../core/validation/host_validator.dart';
 import '../../services/dns_client.dart';
-import '../traceroute/traceroute_controller.dart';
 
 /// Preset DNS servers (IP literals — the raw UDP client needs no resolver).
 const Map<String, String> kDnsServers = {
@@ -35,7 +35,7 @@ class DnslookupController extends ChangeNotifier {
     required String serverIp,
     int timeoutMs = 2000,
   }) async {
-    final host = TracerouteController.normalizeTraceHost(rawHost);
+    final host = normalizeTraceHost(rawHost);
     if (host == null) {
       _error = 'Invalid domain. Use a hostname or IP literal.';
       notifyListeners();

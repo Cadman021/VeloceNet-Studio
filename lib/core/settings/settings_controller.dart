@@ -3,8 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/update_checker.dart';
-import '../../services/webhook_dispatcher.dart'
-    show buildProxyDirective;
+import '../../services/webhook_dispatcher.dart' show buildProxyDirective;
 import '../app_info.dart';
 import 'secret_store.dart';
 
@@ -28,6 +27,8 @@ class SettingsController extends ChangeNotifier {
   static const _kProxyEnabled = 'settings.proxyEnabled';
   static const _kProxy = 'settings.proxy';
   static const _kTray = 'settings.tray';
+  static const _kAlertOfflineAfter = 'settings.alertOfflineAfter';
+  static const _kAlertRecoverAfter = 'settings.alertRecoverAfter';
   static const _kUpdateAuto = 'settings.updateAuto';
   static const _kLastUpdateCheck = 'settings.lastUpdateCheck';
   static const _kKnownLatest = 'settings.knownLatest';
@@ -38,9 +39,13 @@ class SettingsController extends ChangeNotifier {
   Locale _locale = const Locale('en');
 
   // Alert webhooks (Telegram bot + Discord webhook). The three secrets
-  // below live in the OS credential store (Keychain / Credential Manager /
-  // libsecret) via flutter_secure_storage — never in plaintext prefs. The
-  // toggles stay in shared_preferences (non-sensitive).
+  // below are DPAPI-protected on Windows and plaintext-passthrough
+  // elsewhere (see secret_store.dart + SECURITY.md). The toggles stay in
+  // shared_preferences (non-sensitive).
+  //
+  // Non-null [secretWarning] means the last save landed unprotected and
+  // the webhooks section surfaces it (silent fallback was a real bug).
+  String? secretWarning;
   bool telegramEnabled = false;
   String telegramToken = '';
   String telegramChatId = '';
@@ -57,6 +62,12 @@ class SettingsController extends ChangeNotifier {
   // Minimize to the system tray on window close instead of quitting.
   // Monitoring keeps running in the background; Quit lives in the tray menu.
   bool trayEnabled = true;
+
+  // Alert trip points, mirrored to the prober (native engine + fallback):
+  // offline after N consecutive failures, recovery after M consecutive
+  // successes. Same defaults/semantics as stats.rs.
+  int alertOfflineAfter = 3;
+  int alertRecoverAfter = 2;
   // Automatic (startup) update checks. Manual "check now" taps always run
   // regardless — this toggle is the offline-friendly opt-out.
   bool updateCheckEnabled = true;
@@ -126,6 +137,8 @@ class SettingsController extends ChangeNotifier {
       proxyEnabled = prefs.getBool(_kProxyEnabled) ?? false;
       proxyAddress = prefs.getString(_kProxy) ?? '';
       trayEnabled = prefs.getBool(_kTray) ?? true;
+      alertOfflineAfter = (prefs.getInt(_kAlertOfflineAfter) ?? 3).clamp(1, 20);
+      alertRecoverAfter = (prefs.getInt(_kAlertRecoverAfter) ?? 2).clamp(1, 20);
       updateCheckEnabled = prefs.getBool(_kUpdateAuto) ?? true;
       latestKnownVersion = prefs.getString(_kKnownLatest);
       latestUpdateNotes = prefs.getString(_kKnownNotes) ?? '';
@@ -172,12 +185,19 @@ class SettingsController extends ChangeNotifier {
     }
   }
 
-  Future<void> _writeSecret(String key, String value) async {
+  /// Writes one secret, returning false when protection was expected but
+  /// failed (value landed as plaintext). Delete of an empty value always
+  /// "succeeds".
+  Future<bool> _writeSecret(String key, String value) async {
     try {
-      final op =
-          value.isEmpty ? _secrets.delete(key) : _secrets.write(key, value);
-      await op.timeout(_secretTimeout);
-    } catch (_) {}
+      if (value.isEmpty) {
+        await _secrets.delete(key).timeout(_secretTimeout);
+        return true;
+      }
+      return await _secrets.writeProtected(key, value).timeout(_secretTimeout);
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _saveWebhookPrefs() async {
@@ -187,9 +207,16 @@ class SettingsController extends ChangeNotifier {
       await prefs.setBool(_kDcEnabled, discordEnabled);
       await prefs.setString(_kWhTemplate, webhookTemplate);
     } catch (_) {}
-    await _writeSecret(_kTgToken, telegramToken);
-    await _writeSecret(_kTgChat, telegramChatId);
-    await _writeSecret(_kDcUrl, discordUrl);
+    final results = await Future.wait([
+      _writeSecret(_kTgToken, telegramToken),
+      _writeSecret(_kTgChat, telegramChatId),
+      _writeSecret(_kDcUrl, discordUrl),
+    ]);
+    final ok = !results.contains(false);
+    if ((ok && secretWarning != null) || (!ok && secretWarning == null)) {
+      secretWarning = ok ? null : 'unprotected';
+      notifyListeners();
+    }
   }
 
   Future<void> setTelegram(
@@ -214,12 +241,46 @@ class SettingsController extends ChangeNotifier {
     await _saveWebhookPrefs();
   }
 
+  /// Batch save for debounced text fields (one DPAPI+prefs round instead
+  /// of one per keystroke — see the settings screen).
+  Future<void> saveSecretFields({
+    String? token,
+    String? chatId,
+    String? url,
+    String? template,
+    String? proxyAddress,
+  }) async {
+    if (token != null) telegramToken = token;
+    if (chatId != null) telegramChatId = chatId;
+    if (url != null) discordUrl = url;
+    if (template != null) webhookTemplate = template;
+    if (proxyAddress != null) this.proxyAddress = proxyAddress;
+    notifyListeners();
+    await _saveWebhookPrefs();
+  }
+
   Future<void> setTrayEnabled(bool value) async {
     trayEnabled = value;
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kTray, trayEnabled);
+    } catch (_) {}
+  }
+
+  Future<void> setAlertThresholds(
+      {int? offlineAfter, int? recoverAfter}) async {
+    if (offlineAfter != null) {
+      alertOfflineAfter = offlineAfter.clamp(1, 20);
+    }
+    if (recoverAfter != null) {
+      alertRecoverAfter = recoverAfter.clamp(1, 20);
+    }
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kAlertOfflineAfter, alertOfflineAfter);
+      await prefs.setInt(_kAlertRecoverAfter, alertRecoverAfter);
     } catch (_) {}
   }
 

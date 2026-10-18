@@ -33,34 +33,42 @@ class HopDataTable extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: context.bgColor,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(12)),
               border: Border(bottom: BorderSide(color: context.borderColor)),
             ),
             child: Row(
               children: [
                 SizedBox(
                   width: 50,
-                  child: Text(strings.get('colHop'), style: headerStyle(context.textMutedColor)),
+                  child: Text(strings.get('colHop'),
+                      style: headerStyle(context.textMutedColor)),
                 ),
                 SizedBox(
                   width: 90,
-                  child: Text(strings.get('colNodeType'), style: headerStyle(context.textMutedColor)),
+                  child: Text(strings.get('colNodeType'),
+                      style: headerStyle(context.textMutedColor)),
                 ),
                 Expanded(
                   flex: 3,
-                  child: Text(strings.get('colNodeIp'), style: headerStyle(context.textMutedColor)),
+                  child: Text(strings.get('colNodeIp'),
+                      style: headerStyle(context.textMutedColor)),
                 ),
                 Expanded(
                   flex: 2,
-                  child: Text(strings.get('colRtt'), style: headerStyle(context.textMutedColor)),
+                  child: Text(strings.get('colRtt'),
+                      style: headerStyle(context.textMutedColor)),
                 ),
                 Expanded(
                   flex: 3,
-                  child: Text(strings.get('colStatus'), style: headerStyle(context.textMutedColor)),
+                  child: Text(strings.get('colStatus'),
+                      style: headerStyle(context.textMutedColor)),
                 ),
                 SizedBox(
                   width: 40,
-                  child: Text(strings.get('colCopy'), style: headerStyle(context.textMutedColor), textAlign: TextAlign.center),
+                  child: Text(strings.get('colCopy'),
+                      style: headerStyle(context.textMutedColor),
+                      textAlign: TextAlign.center),
                 ),
               ],
             ),
@@ -76,11 +84,13 @@ class HopDataTable extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.table_rows_outlined, size: 36, color: context.textMutedColor),
+                        Icon(Icons.table_rows_outlined,
+                            size: 36, color: context.textMutedColor),
                         const SizedBox(height: 8),
                         Text(
                           strings.get('noTableData'),
-                          style: TextStyle(color: context.textMutedColor, fontSize: 13),
+                          style: TextStyle(
+                              color: context.textMutedColor, fontSize: 13),
                         ),
                       ],
                     ),
@@ -120,7 +130,8 @@ class _HopRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: context.borderColor, width: 0.5)),
+        border:
+            Border(bottom: BorderSide(color: context.borderColor, width: 0.5)),
       ),
       child: Row(
         children: [
@@ -143,23 +154,33 @@ class _HopRow extends StatelessWidget {
                 Icon(
                   hop.reachedDestination
                       ? Icons.flag_circle_rounded
-                      : (hop.isTimeout ? Icons.block_rounded : Icons.router_outlined),
+                      : (hop.isTimeout
+                          ? Icons.block_rounded
+                          : Icons.router_outlined),
                   size: 15,
                   color: hop.reachedDestination
                       ? AppColors.primary
-                      : (hop.isTimeout ? AppColors.latencyCritical : AppColors.cyan),
+                      : (hop.isTimeout
+                          ? AppColors.latencyCritical
+                          : AppColors.cyan),
                 ),
                 const SizedBox(width: 5),
                 Text(
                   hop.reachedDestination
                       ? strings.get('nodeDest')
-                      : (hop.isTimeout ? strings.get('nodeTimeout') : strings.get('nodeRouter')),
+                      : (hop.isTimeout
+                          ? strings.get('nodeTimeout')
+                          : strings.get('nodeRouter')),
                   style: TextStyle(
                     fontSize: 11,
                     color: hop.reachedDestination
                         ? AppColors.primary
-                        : (hop.isTimeout ? AppColors.latencyCritical : context.textSecondaryColor),
-                    fontWeight: hop.reachedDestination ? FontWeight.bold : FontWeight.normal,
+                        : (hop.isTimeout
+                            ? AppColors.latencyCritical
+                            : context.textSecondaryColor),
+                    fontWeight: hop.reachedDestination
+                        ? FontWeight.bold
+                        : FontWeight.normal,
                   ),
                 ),
               ],
@@ -167,14 +188,32 @@ class _HopRow extends StatelessWidget {
           ),
           Expanded(
             flex: 3,
-            child: Text(
-              hop.ip,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: hop.isTimeout ? AppColors.latencyCritical : context.textPrimaryColor,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  hop.ip,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: hop.isTimeout
+                        ? AppColors.latencyCritical
+                        : context.textPrimaryColor,
+                  ),
+                ),
+                if (hop.hostname != null && hop.hostname!.isNotEmpty)
+                  Text(
+                    hop.hostname!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: context.textMutedColor,
+                    ),
+                  ),
+              ],
             ),
           ),
           Expanded(
@@ -206,7 +245,9 @@ class _HopRow extends StatelessWidget {
               hop.status.isNotEmpty ? hop.status : '-',
               style: TextStyle(
                 fontSize: 11,
-                color: hop.isTimeout ? AppColors.latencyCritical : context.textSecondaryColor,
+                color: hop.isTimeout
+                    ? AppColors.latencyCritical
+                    : context.textSecondaryColor,
               ),
               overflow: TextOverflow.ellipsis,
             ),
@@ -222,9 +263,10 @@ class _HopRow extends StatelessWidget {
                       Clipboard.setData(ClipboardData(text: hop.ip));
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('${hop.ip} ${strings.get('copiedSuffix')}'),
+                          content:
+                              Text('${hop.ip} ${strings.get('copiedSuffix')}'),
                           duration: const Duration(seconds: 1),
-                                                  ),
+                        ),
                       );
                     },
                   )

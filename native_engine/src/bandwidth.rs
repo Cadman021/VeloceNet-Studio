@@ -14,6 +14,10 @@ struct IfCounters {
     out_octets: u64,
     speed_bps: u64,
     is_up: bool,
+    /// True for real hardware (NDIS HardwareInterface flag). Filter, virtual
+    /// (Hyper-V/WSL/TAP) and tunnel adapters re-report the same bytes as the
+    /// physical NIC, so they are listed but excluded from totals.
+    is_hardware: bool,
 }
 
 /// Per-process traffic estimate for the current sampling window.
@@ -125,13 +129,19 @@ impl BandwidthMonitor {
                     }
                 }
 
-                prev = current
-                    .into_iter()
-                    .map(|c| (c.name.clone(), c))
-                    .collect();
+                prev = current.into_iter().map(|c| (c.name.clone(), c)).collect();
                 prev_time = Some(now);
 
-                std::thread::sleep(std::time::Duration::from_millis(interval));
+                // Sleep in slices so stop() never blocks longer than ~100ms
+                // waiting for the join (previously a single sleep of up to
+                // 5s, called from the UI thread via FFI).
+                let slices = (interval / 100).clamp(1, 50);
+                for _ in 0..slices {
+                    if !running.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
             }
         });
 
@@ -166,14 +176,15 @@ fn build_snapshot(
     let mut total_down = 0.0;
 
     for cur in current {
-        // Keep down interfaces OUT of the totals (they report stale
-        // counters) but still list them so the UI can show their state.
-        // Skip loopback / virtual noise entirely.
+        // Keep down and non-hardware interfaces OUT of the totals (stale
+        // counters, or the same bytes re-reported by filter/virtual
+        // adapters) but still list them so the UI can show their state.
+        // Skip loopback noise entirely.
         let lname = cur.name.to_lowercase();
         if lname.contains("loopback") || lname.contains("loobpack") {
             continue;
         }
-        let counts_toward_totals = cur.is_up;
+        let counts_toward_totals = cur.is_up && cur.is_hardware;
 
         let (up_bps, down_bps) = match prev.get(&cur.name) {
             Some(p) => {
@@ -281,6 +292,11 @@ fn read_interface_counters_win() -> Vec<IfCounters> {
             // IfOperStatusUp == 1. Anything else (down, dormant, testing…)
             // reports stale counters, so it is listed but excluded from totals.
             let is_up = row.OperStatus == IfOperStatusUp;
+            // Bit 0 of the flags byte is HardwareInterface (see
+            // MIB_IF_ROW2 docs; windows-sys exposes only the raw byte).
+            // WFP/QoS filters, Hyper-V/WSL switches and TAP adapters all
+            // report the physical NIC's bytes a second time.
+            let is_hardware = row.InterfaceAndOperStatusFlags._bitfield & 0x01 != 0;
             let label = if !alias.is_empty() {
                 alias.clone()
             } else if !descr.is_empty() {
@@ -295,6 +311,7 @@ fn read_interface_counters_win() -> Vec<IfCounters> {
                 out_octets: row.OutOctets,
                 speed_bps: row.TransmitLinkSpeed,
                 is_up,
+                is_hardware,
             });
         }
 
@@ -315,11 +332,11 @@ fn decode_wide(buf: &[u16]) -> String {
 fn read_process_traffic_win(total_up: f64, total_down: f64) -> Vec<ProcessTraffic> {
     use std::collections::HashMap;
     use windows_sys::Win32::NetworkManagement::IpHelper::{
-        GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCPROW_OWNER_PID,
+        GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCPROW_OWNER_PID, MIB_TCP_STATE_ESTAB,
         MIB_UDPROW_OWNER_PID, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
     };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
 
@@ -351,7 +368,16 @@ fn read_process_traffic_win(total_up: f64, total_down: f64) -> Vec<ProcessTraffi
                 let count = *(buf.as_ptr() as *const u32) as usize;
                 let rows = buf.as_ptr().add(4) as *const MIB_TCPROW_OWNER_PID;
                 for i in 0..count {
-                    let pid = (*rows.add(i)).dwOwningPid;
+                    let row = &*rows.add(i);
+                    // Count only ESTABLISHED connections: LISTENING sockets
+                    // and TIME_WAIT zombies carry no traffic, yet a browser
+                    // with dozens of idle sockets used to outrank an actual
+                    // downloader holding a single connection. (UDP has no
+                    // state; all UDP rows still count.)
+                    if row.dwState != MIB_TCP_STATE_ESTAB as u32 {
+                        continue;
+                    }
+                    let pid = row.dwOwningPid;
                     if pid > 4 {
                         let e = conns.entry(pid).or_insert((0, 0));
                         e.0 += 1;
@@ -404,22 +430,24 @@ fn read_process_traffic_win(total_up: f64, total_down: f64) -> Vec<ProcessTraffi
     let idle = (total_up + total_down) <= 0.0;
 
     // 2. Resolve PID -> process name via ToolHelp snapshot.
+    // Unicode (W) variants: the ANSI ones mangle non-ASCII exe names via
+    // the system codepage before from_utf8_lossy ever sees them.
     let mut names: HashMap<u32, String> = HashMap::new();
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snap != -1 {
-            let mut entry: PROCESSENTRY32 = std::mem::zeroed();
-            entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
-            if Process32First(snap, &mut entry) != 0 {
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            if Process32FirstW(snap, &mut entry) != 0 {
                 loop {
                     let pid = entry.th32ProcessID;
                     if conns.contains_key(&pid) {
                         let raw = &entry.szExeFile;
                         let len = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
-                        let name = String::from_utf8_lossy(&raw[..len]).to_string();
+                        let name = String::from_utf16_lossy(&raw[..len]).to_string();
                         names.insert(pid, name);
                     }
-                    if Process32Next(snap, &mut entry) == 0 {
+                    if Process32NextW(snap, &mut entry) == 0 {
                         break;
                     }
                 }
@@ -453,7 +481,10 @@ fn read_process_traffic_win(total_up: f64, total_down: f64) -> Vec<ProcessTraffi
             .to_string();
             ProcessTraffic {
                 pid,
-                name: names.get(&pid).cloned().unwrap_or_else(|| format!("pid {pid}")),
+                name: names
+                    .get(&pid)
+                    .cloned()
+                    .unwrap_or_else(|| format!("pid {pid}")),
                 protocol: proto,
                 up_bps: up,
                 down_bps: down,
@@ -501,6 +532,8 @@ fn read_interface_counters_fallback() -> Vec<IfCounters> {
             out_octets: nums[8],
             speed_bps: 0,
             is_up: true,
+            // /proc entries are real kernel interfaces; keep old behavior.
+            is_hardware: true,
         });
     }
     out

@@ -58,7 +58,10 @@ class WarpController extends ChangeNotifier {
   /// Expanded "ip:port" list (cartesian product).
   List<String> expandEndpoints() {
     final out = <String>[];
-    final ports = selectedPorts.isEmpty ? [WarpCatalog.defaultPort] : selectedPorts.toList()..sort();
+    final ports = selectedPorts.isEmpty
+        ? [WarpCatalog.defaultPort]
+        : selectedPorts.toList()
+      ..sort();
     for (final ip in expandSelectedIps()) {
       for (final p in ports) {
         out.add('$ip:$p');
@@ -67,7 +70,8 @@ class WarpController extends ChangeNotifier {
     return out;
   }
 
-  int get plannedCount => expandSelectedIps().length *
+  int get plannedCount =>
+      expandSelectedIps().length *
       (selectedPorts.isEmpty ? 1 : selectedPorts.length);
 
   void toggleRange(String id) {
@@ -153,18 +157,38 @@ class WarpController extends ChangeNotifier {
     }
     _pollTimer?.cancel();
     int lastTested = -1;
+    final accumulated = <WarpResult>[];
     _pollTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
       if (_activeSessionId == 0 || runId != _runId) {
         timer.cancel();
         return;
       }
-      final jsonStr = _bindings.pollWarp(_activeSessionId);
+      // Incremental deltas: only results appended since the last poll
+      // cross FFI, instead of re-serializing up to 4096 rows per tick.
+      final jsonStr =
+          _bindings.pollWarpSince(_activeSessionId, accumulated.length);
       if (jsonStr == null || jsonStr.isEmpty) return;
       try {
         final map = jsonDecode(jsonStr) as Map<String, dynamic>;
-        final next = WarpProgress.fromJson(map);
+        final deltaResults = (map['newResults'] as List<dynamic>?)
+                ?.map((e) => WarpResult.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const <WarpResult>[];
+        accumulated.addAll(deltaResults);
+        final next = WarpProgress(
+          sessionId: _activeSessionId,
+          total: (map['total'] as num?)?.toInt() ?? 0,
+          tested: (map['tested'] as num?)?.toInt() ?? accumulated.length,
+          succeeded: (map['succeeded'] as num?)?.toInt() ?? 0,
+          failed: (map['failed'] as num?)?.toInt() ?? 0,
+          isRunning: (map['isRunning'] as bool?) ?? true,
+          isCompleted: (map['isCompleted'] as bool?) ?? false,
+          error: map['error'] as String?,
+          results: List.of(accumulated),
+        );
         // Notify only on progress steps (throttles rebuilds).
-        if (next.tested != lastTested || next.isCompleted != _progress.isCompleted) {
+        if (next.tested != lastTested ||
+            next.isCompleted != _progress.isCompleted) {
           lastTested = next.tested;
           _progress = next;
           notifyListeners();
@@ -191,10 +215,10 @@ class WarpController extends ChangeNotifier {
 
     for (int i = 0; i < endpoints.length; i += chunk) {
       if (_cancelFallback || runId != _runId) break;
-      final slice = endpoints.sublist(
-          i, (i + chunk).clamp(0, endpoints.length));
-      final chunkResults = await Future.wait(
-          slice.map((e) => _tcpProbeFallback(e)));
+      final slice =
+          endpoints.sublist(i, (i + chunk).clamp(0, endpoints.length));
+      final chunkResults =
+          await Future.wait(slice.map((e) => _tcpProbeFallback(e)));
       if (_cancelFallback || runId != _runId) break;
       for (final r in chunkResults) {
         results.add(r);

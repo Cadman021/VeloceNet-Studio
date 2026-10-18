@@ -1,6 +1,9 @@
+# Single-version policy: the engine ships only inside the app bundle, so it
+# carries the app version (tool/check_versions.ps1 enforces the three-way
+# match: pubspec â†” app_info.dart â†” Cargo.toml).
 [package]
 name = "netstudio_engine"
-version = "0.3.0"
+version = "1.5.0"
 edition = "2021"
 authors = ["VeloceNet-Studio Contributors"]
 repository = "https://github.com/Cadman021/VeloceNet-Studio"
@@ -11,13 +14,33 @@ description = "High-performance network probing core for NetStudio"
 name = "netstudio_engine"
 crate-type = ["cdylib", "rlib"]
 
+# NOTE: every dep is supply-chain surface â€” keep it used.
 [dependencies]
 tokio = { version = "1.38", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+boringtun = "0.7.1"
+rand_core = { version = "0.6", features = ["getrandom"] }
+# HTTPS probes need a TLS handshake (TTFB + peer certificate expiry).
+# ring backend only: ring is already in the tree via boringtun, and no root
+# store is needed â€” the probe records the presented certificate instead of
+# validating it (monitoring must report even for expired/self-signed certs).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[dev-dependencies]
+# Test-only: self-signed certs with a chosen notAfter for the HTTPS probe
+# integration test. Ring backend avoids the aws-lc-rs C toolchain.
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem"] }
+
+# Unprivileged ICMP ("ping") sockets on Linux/macOS:
+# socket(PF_INET, SOCK_DGRAM, IPPROTO_ICMP). socket2 builds/owns the socket
+# (create, TTL, timeouts); libc is only needed to reach IP_RECVERR +
+# recvmsg(MSG_ERRQUEUE) on Linux, where TTL-expired replies for unprivileged
+# traceroutes arrive (macOS delivers them as normal datagrams instead).
+[target.'cfg(unix)'.dependencies]
 socket2 = { version = "0.5", features = ["all"] }
-rand = "0.8"
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
@@ -25,6 +48,7 @@ windows-sys = { version = "0.52", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
     "Win32_Networking_WinSock",
+    "Win32_System_IO",
     "Win32_System_Threading",
     "Win32_System_Diagnostics_ToolHelp"
 ] }

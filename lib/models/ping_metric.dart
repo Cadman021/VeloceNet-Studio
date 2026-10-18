@@ -37,6 +37,15 @@ class PingMetric {
   final List<double> history;
   final int lastCheckedEpochMs;
 
+  /// Last HTTP status code for HTTP(S) probes (null for ICMP/TCP or
+  /// transport failures). 4xx/5xx responses are failures but still report
+  /// their status.
+  final int? httpStatus;
+
+  /// Days until the TLS certificate expires (negative = already expired).
+  /// Sticky across non-TLS samples, like the native tracker.
+  final int? certDaysLeft;
+
   const PingMetric({
     required this.id,
     required this.name,
@@ -55,9 +64,12 @@ class PingMetric {
     required this.jitterMs,
     required this.history,
     required this.lastCheckedEpochMs,
+    this.httpStatus,
+    this.certDaysLeft,
   });
 
-  factory PingMetric.initial(int id, String name, String host, int port, String protocol) {
+  factory PingMetric.initial(
+      int id, String name, String host, int port, String protocol) {
     return PingMetric(
       id: id,
       name: name,
@@ -103,6 +115,8 @@ class PingMetric {
       jitterMs: (json['jitter_ms'] as num?)?.toDouble() ?? 0.0,
       history: historyList,
       lastCheckedEpochMs: (json['last_checked_epoch_ms'] as num?)?.toInt() ?? 0,
+      httpStatus: (json['http_status'] as num?)?.toInt(),
+      certDaysLeft: (json['cert_days_left'] as num?)?.toInt(),
     );
   }
 }

@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../core/validation/host_validator.dart' show isValidDiscordWebhookUrl;
 import '../models/alert_event.dart';
 import '../state/alert_log.dart';
 
@@ -41,8 +43,7 @@ class WebhookConfig {
       telegramToken.trim().isNotEmpty &&
       telegramChatId.trim().isNotEmpty;
 
-  bool get canDiscord =>
-      discordEnabled && discordUrl.trim().startsWith('https://');
+  bool get canDiscord => discordEnabled && isValidDiscordWebhookUrl(discordUrl);
 }
 
 typedef HttpPoster = Future<bool> Function(
@@ -96,13 +97,10 @@ Future<bool> postJson(Uri url, Map<String, String> body,
   HttpClient? client;
   try {
     client = HttpClient()..findProxy = (_) => proxy;
-    final req = await client
-        .postUrl(url)
-        .timeout(const Duration(seconds: 10));
+    final req = await client.postUrl(url).timeout(const Duration(seconds: 10));
     req.headers.contentType = ContentType.json;
     req.write(payload);
-    final resp =
-        await req.close().timeout(const Duration(seconds: 10));
+    final resp = await req.close().timeout(const Duration(seconds: 10));
     await resp.drain<void>();
     return resp.statusCode >= 200 && resp.statusCode < 300;
   } catch (_) {
@@ -142,13 +140,36 @@ String formatAlertMessage(AlertEvent e, {String? template}) {
       .replaceAll('{detail}', detail);
 }
 
+/// One queued outbound message: how to render it for a given delivery
+/// delay, and how to send one rendered variant.
+class _OutboxEntry {
+  final String Function(Duration delayedBy) render;
+  final Future<bool> Function(String message) send;
+  final DateTime firstFailedAt;
+  int attempts = 0;
+  DateTime nextRetry;
+
+  _OutboxEntry({
+    required this.render,
+    required this.send,
+    required this.firstFailedAt,
+  }) : nextRetry = firstFailedAt.add(const Duration(minutes: 1));
+}
+
 class WebhookDispatcher {
   static const cooldown = Duration(minutes: 5);
+  static const _maxOutbox = 100;
+  static const _maxOutboxAge = Duration(hours: 24);
+  static const _backoffMinutes = [1, 2, 4, 8, 15];
 
   final AlertLog log;
   final WebhookConfig Function() configOf;
   final HttpPoster _post;
-  final Map<int, DateTime> _lastSent = {};
+  // Cooldown is per (target, event kind): a recovery must never be
+  // swallowed just because the matching down-alert went out recently.
+  final Map<String, DateTime> _lastSent = {};
+  final List<_OutboxEntry> _outbox = [];
+  Timer? _flushTimer;
   bool _disposed = false;
 
   WebhookDispatcher({
@@ -165,39 +186,97 @@ class WebhookDispatcher {
     unawaited(dispatch(event));
   }
 
+  static String _cooldownKey(AlertEvent e) => '${e.targetId}:${e.to.index}';
+
   /// Sends one event to all enabled channels, honoring the cooldown.
-  /// Returns true when at least one channel accepted it.
+  /// Returns true when at least one channel accepted it. Failures land in
+  /// the outbox for retry instead of being lost (e.g. during an internet
+  /// outage — the very moment alerts matter most).
   Future<bool> dispatch(AlertEvent event, {DateTime? now}) async {
     final at = (now ?? DateTime.now()).toUtc();
-    final last = _lastSent[event.targetId];
+    final key = _cooldownKey(event);
+    final last = _lastSent[key];
     if (last != null && at.difference(last) < cooldown) {
-      return false; // flapping guard
+      return false; // flapping guard (same event kind only)
     }
     final config = configOf();
-    final message = formatAlertMessage(event, template: config.template);
+    String render(Duration delayedBy) {
+      var text = formatAlertMessage(event, template: config.template);
+      if (delayedBy >= const Duration(minutes: 2)) {
+        text += '\n(⏳ delayed ${delayedBy.inMinutes}m — connectivity was down)';
+      }
+      return text;
+    }
+
     var sent = false;
     if (config.canTelegram) {
-      final ok = await _deliver(
-        config,
-        Uri.parse(
-            'https://api.telegram.org/bot${config.telegramToken.trim()}/sendMessage'),
-        {
-          'chat_id': config.telegramChatId.trim(),
-          'text': message,
-        },
-      );
-      sent = sent || ok;
+      final url = Uri.parse(
+          'https://api.telegram.org/bot${config.telegramToken.trim()}/sendMessage');
+      final chatId = config.telegramChatId.trim();
+      Future<bool> send(String message) =>
+          _deliver(config, url, {'chat_id': chatId, 'text': message});
+      if (await send(render(Duration.zero))) {
+        sent = true;
+      } else {
+        _enqueue(_OutboxEntry(render: render, send: send, firstFailedAt: at));
+      }
     }
     if (config.canDiscord) {
-      final ok = await _deliver(
-        config,
-        Uri.parse(config.discordUrl.trim()),
-        {'content': message},
-      );
-      sent = sent || ok;
+      final url = Uri.parse(config.discordUrl.trim());
+      Future<bool> send(String message) =>
+          _deliver(config, url, {'content': message});
+      if (await send(render(Duration.zero))) {
+        sent = true;
+      } else {
+        _enqueue(_OutboxEntry(render: render, send: send, firstFailedAt: at));
+      }
     }
-    if (sent) _lastSent[event.targetId] = at;
+    if (sent) _lastSent[key] = at;
     return sent;
+  }
+
+  void _enqueue(_OutboxEntry entry) {
+    if (_outbox.length >= _maxOutbox) _outbox.removeAt(0);
+    _outbox.add(entry);
+    _flushTimer ??= Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(flushOutbox()),
+    );
+  }
+
+  /// Retries due outbox entries. Exposed for tests (pass `now`).
+  @visibleForTesting
+  Future<void> flushOutbox({DateTime? now}) async {
+    final at = (now ?? DateTime.now()).toUtc();
+    final done = <_OutboxEntry>[];
+    for (final entry in List.of(_outbox)) {
+      if (_disposed) break;
+      if (at.isBefore(entry.nextRetry)) continue;
+      if (at.difference(entry.firstFailedAt) > _maxOutboxAge) {
+        done.add(entry); // stale: drop silently, it outlived relevance
+        continue;
+      }
+      bool ok = false;
+      try {
+        ok = await entry.send(entry.render(at.difference(entry.firstFailedAt)));
+      } catch (_) {
+        ok = false;
+      }
+      if (ok) {
+        done.add(entry);
+      } else {
+        entry.attempts++;
+        final step = entry.attempts < _backoffMinutes.length
+            ? _backoffMinutes[entry.attempts]
+            : _backoffMinutes.last;
+        entry.nextRetry = at.add(Duration(minutes: step));
+      }
+    }
+    _outbox.removeWhere(done.contains);
+    if (_outbox.isEmpty) {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+    }
   }
 
   /// Sends one JSON body via the injected poster, or through the configured
@@ -246,6 +325,8 @@ class WebhookDispatcher {
 
   void dispose() {
     _disposed = true;
+    _flushTimer?.cancel();
+    _flushTimer = null;
     log.removeListener(_onLog);
   }
 }

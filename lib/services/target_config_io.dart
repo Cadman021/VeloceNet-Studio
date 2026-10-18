@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import '../core/validation/host_validator.dart';
 import '../models/ping_target.dart';
-import '../views/traceroute/traceroute_controller.dart';
 
 /// Backup envelope version. Bump when the schema changes.
 const int kTargetBackupVersion = 1;
@@ -39,7 +39,9 @@ TargetImportResult importTargetsJson(String raw) {
       entries = decoded; // tolerate a bare array too
     } else if (decoded is Map<String, dynamic>) {
       final list = decoded['targets'];
-      if (list is! List) return const TargetImportResult(targets: [], skipped: 0);
+      if (list is! List) {
+        return const TargetImportResult(targets: [], skipped: 0);
+      }
       entries = list;
     } else {
       return const TargetImportResult(targets: [], skipped: 0);
@@ -65,12 +67,55 @@ TargetImportResult importTargetsJson(String raw) {
   return TargetImportResult(targets: targets, skipped: skipped);
 }
 
-PingTarget? _parseTarget(dynamic entry) {
+/// Decodes our own persisted target list (same envelope as
+/// [exportTargetsJson]). Unlike imports, ids are KEPT (validated positive)
+/// so metrics/history continuity survives restarts; duplicate ids are
+/// dropped. Returns null when there is nothing usable (caller falls back
+/// to defaults). Never throws.
+List<PingTarget>? decodePersistedTargets(String raw) {
+  List<dynamic> entries;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is List) {
+      entries = decoded;
+    } else if (decoded is Map<String, dynamic>) {
+      final list = decoded['targets'];
+      if (list is! List) return null;
+      entries = list;
+    } else {
+      return null;
+    }
+  } catch (_) {
+    return null;
+  }
+
+  final targets = <PingTarget>[];
+  final seenIds = <int>{};
+  for (final entry in entries) {
+    if (targets.length >= kMaxImportTargets) break;
+    final t = _parseTarget(entry, keepId: true);
+    if (t == null || !seenIds.add(t.id)) continue;
+    targets.add(t);
+  }
+  return targets.isEmpty ? null : targets;
+}
+
+PingTarget? _parseTarget(dynamic entry, {bool keepId = false}) {
   if (entry is! Map) return null;
   final map = Map<String, dynamic>.from(entry);
 
+  // Persistence round-trip keeps ids (continuity for metrics/history);
+  // backups ignore them (collision-free reassignment on import).
+  int id = 0;
+  if (keepId) {
+    final rawId = map['id'];
+    final parsed = rawId is num ? rawId.toInt() : int.tryParse('$rawId');
+    if (parsed == null || parsed <= 0) return null;
+    id = parsed;
+  }
+
   final rawHost = (map['host'] ?? '').toString();
-  final host = TracerouteController.normalizeTraceHost(rawHost);
+  final host = normalizeTraceHost(rawHost);
   if (host == null) return null;
 
   // Absent port defaults to 80 (like PingTarget); a present but
@@ -84,6 +129,9 @@ PingTarget? _parseTarget(dynamic entry) {
   }
 
   final protocol = _parseProtocol(map['protocol']);
+  final httpPath = protocol.isHttp
+      ? PingTarget.sanitizeHttpPath(map['http_path']?.toString())
+      : '';
 
   int intOr(dynamic v, int fallback, int min, int max) {
     final n = v is num ? v.toInt() : int.tryParse('$v');
@@ -96,15 +144,23 @@ PingTarget? _parseTarget(dynamic entry) {
   if (name.length > 128) name = name.substring(0, 128);
 
   final enabled = map['is_enabled'];
+  final muted = map['is_muted'] ?? map['muted'];
+  // Tolerant: `tags` may be a list or a comma-separated string (hand-written
+  // backups); a legacy singular `tag` is accepted too.
+  final rawTags = map['tags'] ?? (map['tag'] != null ? [map['tag']] : null);
   return PingTarget(
-    id: 0, // reassigned by the controller
+    id: id, // 0 unless keepId (controller reassigns those)
     name: name,
     host: host,
     port: port,
     protocol: protocol,
+    httpPath: httpPath,
     intervalMs: intOr(map['interval_ms'], 1000, 200, 60000),
     timeoutMs: intOr(map['timeout_ms'], 1500, 100, 10000),
     isEnabled: enabled is bool ? enabled : true,
+    muted: muted is bool ? muted : false,
+    group: PingTarget.sanitizeGroup(map['group']?.toString()),
+    tags: PingTarget.parseTags(rawTags),
   );
 }
 
@@ -114,6 +170,8 @@ NetworkProtocol _parseProtocol(dynamic v) {
   }
   final s = '$v'.trim().toUpperCase();
   if (s == 'TCP' || s == '1') return NetworkProtocol.tcp;
+  if (s == 'HTTP' || s == '2') return NetworkProtocol.http;
+  if (s == 'HTTPS' || s == '3') return NetworkProtocol.https;
   return NetworkProtocol.icmp;
 }
 
@@ -128,8 +186,8 @@ Future<String> exportTargetsFile(List<PingTarget> targets) async {
   String two(int n) => n.toString().padLeft(2, '0');
   final stamp =
       '${now.year}${two(now.month)}${two(now.day)}-${two(now.hour)}${two(now.minute)}${two(now.second)}';
-  final file = File(
-      '${dir.path}${Platform.pathSeparator}velocenet-targets-$stamp.json');
+  final file =
+      File('${dir.path}${Platform.pathSeparator}velocenet-targets-$stamp.json');
   await file.writeAsString(exportTargetsJson(targets), flush: true);
   return file.path;
 }

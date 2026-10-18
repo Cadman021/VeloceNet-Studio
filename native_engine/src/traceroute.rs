@@ -47,7 +47,9 @@ mod win_icmp {
     use super::*;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::NetworkManagement::IpHelper::{
-        IcmpSendEcho, IP_OPTION_INFORMATION,
+        IcmpSendEcho, IP_BAD_DESTINATION, IP_DEST_HOST_UNREACHABLE, IP_DEST_NET_UNREACHABLE,
+        IP_DEST_PORT_UNREACHABLE, IP_DEST_PROT_UNREACHABLE, IP_OPTION_INFORMATION,
+        IP_REQ_TIMED_OUT, IP_SUCCESS, IP_TTL_EXPIRED_REASSEM, IP_TTL_EXPIRED_TRANSIT,
     };
 
     #[repr(C)]
@@ -61,11 +63,26 @@ mod win_icmp {
         options: IP_OPTION_INFORMATION,
     }
 
-    const IP_SUCCESS: u32 = 0;
-    const IP_TTL_EXPIRED_TRANSIT: u32 = 11013;
-    const IP_TTL_EXPIRED_REASSEM: u32 = 11014;
+    /// Statuses meaning "no route to the target": the trace should end here
+    /// (the hop is shown, but it is not a destination hit).
+    fn is_terminal_unreachable(status: u32) -> bool {
+        matches!(
+            status,
+            IP_DEST_NET_UNREACHABLE
+                | IP_DEST_HOST_UNREACHABLE
+                | IP_DEST_PROT_UNREACHABLE
+                | IP_DEST_PORT_UNREACHABLE
+                | IP_BAD_DESTINATION
+        )
+    }
 
-    pub fn probe_hop_on_handle(handle: HANDLE, dest_ip_u32: u32, ttl: u8, timeout_ms: u32) -> (Option<Ipv4Addr>, f64, bool, bool, String) {
+    #[allow(clippy::type_complexity)]
+    pub fn probe_hop_on_handle(
+        handle: HANDLE,
+        dest_ip_u32: u32,
+        ttl: u8,
+        timeout_ms: u32,
+    ) -> (Option<Ipv4Addr>, f64, bool, bool, bool, String) {
         unsafe {
             let send_data = b"NetStudioVisualTracerouteHopData";
             let reply_buf_size = size_of::<IcmpEchoReply>() + send_data.len() + 32;
@@ -108,28 +125,139 @@ mod win_icmp {
 
                 if reply.status == IP_SUCCESS {
                     // Reached destination
-                    (Some(hop_ip), rtt, false, true, "Destination Reached".to_string())
-                } else if reply.status == IP_TTL_EXPIRED_TRANSIT || reply.status == IP_TTL_EXPIRED_REASSEM {
+                    (
+                        Some(hop_ip),
+                        rtt,
+                        false,
+                        true,
+                        false,
+                        "Destination Reached".to_string(),
+                    )
+                } else if reply.status == IP_TTL_EXPIRED_TRANSIT
+                    || reply.status == IP_TTL_EXPIRED_REASSEM
+                {
                     // Router in transit
-                    (Some(hop_ip), rtt, false, false, "Time Exceeded in Transit".to_string())
+                    (
+                        Some(hop_ip),
+                        rtt,
+                        false,
+                        false,
+                        false,
+                        "Time Exceeded in Transit".to_string(),
+                    )
+                } else if reply.status == IP_REQ_TIMED_OUT {
+                    // Some Windows paths return a reply record whose status
+                    // is a timeout; do not count it as a real sample.
+                    (
+                        None,
+                        -1.0,
+                        true,
+                        false,
+                        false,
+                        "Request Timed Out".to_string(),
+                    )
+                } else if is_terminal_unreachable(reply.status) {
+                    // Router reports the destination (or its network/port)
+                    // unreachable: stop walking TTLs instead of spraying
+                    // doomed probes up to max_hops.
+                    (
+                        Some(hop_ip),
+                        rtt,
+                        false,
+                        false,
+                        true,
+                        "Destination Unreachable".to_string(),
+                    )
                 } else {
                     // Other ICMP response status
-                    (Some(hop_ip), rtt, false, false, format!("ICMP Status {}", reply.status))
+                    (
+                        Some(hop_ip),
+                        rtt,
+                        false,
+                        false,
+                        false,
+                        format!("ICMP Status {}", reply.status),
+                    )
                 }
             } else {
                 // Timeout / Packet Loss
-                (None, -1.0, true, false, "Request Timed Out".to_string())
+                (
+                    None,
+                    -1.0,
+                    true,
+                    false,
+                    false,
+                    "Request Timed Out".to_string(),
+                )
             }
         }
     }
 }
 
-#[cfg(not(windows))]
-mod win_icmp {
-    use super::*;
+/// One TTL-scoped probe on Linux/macOS: echo request with `ttl`; accepts
+/// the destination's echo reply (reached) or a TTL-expired/unreachable
+/// ICMP error from a router (transit). Same tuple shape as the Windows
+/// probe so the worker loop stays platform-agnostic.
+#[cfg(unix)]
+#[allow(clippy::type_complexity)]
+fn unix_probe_hop(
+    sock: &mut crate::probe::unix_icmp::IcmpSocket,
+    dest: Ipv4Addr,
+    ttl: u8,
+    timeout_ms: u32,
+) -> (Option<Ipv4Addr>, f64, bool, bool, bool, String) {
+    use crate::probe::unix_icmp::{ReplyKind, WaitOutcome};
 
-    pub fn probe_hop_on_handle(_handle: usize, _dest_ip_u32: u32, _ttl: u8, _timeout_ms: u32) -> (Option<Ipv4Addr>, f64, bool, bool, String) {
-        (None, -1.0, true, false, "Non-Windows platform fallback".to_string())
+    let seq = match sock.send_echo(dest, ttl) {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                None,
+                -1.0,
+                true,
+                false,
+                false,
+                format!("ICMP send failed: {}", e),
+            )
+        }
+    };
+    match sock.wait_reply(dest, seq, Duration::from_millis(timeout_ms as u64)) {
+        WaitOutcome::Reply(r) => {
+            let reached = r.kind == ReplyKind::EchoReply || r.from == dest;
+            let (status, terminal) = match r.kind {
+                ReplyKind::EchoReply => ("Destination Reached", false),
+                ReplyKind::TimeExceeded => ("Time Exceeded in Transit", false),
+                ReplyKind::Unreachable if reached => ("Destination Reached", false),
+                ReplyKind::Unreachable => ("Destination Unreachable", true),
+            };
+            (
+                Some(r.from),
+                r.rtt_ms,
+                false,
+                reached,
+                terminal,
+                status.to_string(),
+            )
+        }
+        WaitOutcome::Timeout => (
+            None,
+            -1.0,
+            true,
+            false,
+            false,
+            "Request Timed Out".to_string(),
+        ),
+    }
+}
+
+/// Brackets bare IPv6 literals before appending a port; traceroute itself
+/// is IPv4-only, but a v6 literal must fail with "no IPv4 address" rather
+/// than an unparsable `::1:0`.
+fn host_with_port(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{}]:{}", host, port)
+    } else {
+        format!("{}:{}", host, port)
     }
 }
 
@@ -138,6 +266,10 @@ pub struct TracerouteManager {
     cancel_flags: Arc<RwLock<HashMap<u32, Arc<AtomicBool>>>>,
     next_session_id: AtomicU32,
 }
+
+/// Max concurrent sessions: each spawns a worker thread, and sessions only
+/// vanish on explicit free — unbounded starts would leak threads forever.
+pub const MAX_TRACEROUTE_SESSIONS: usize = 8;
 
 impl Default for TracerouteManager {
     fn default() -> Self {
@@ -155,9 +287,35 @@ impl TracerouteManager {
     }
 
     pub fn start_traceroute(&self, host: String, max_hops: u8, timeout_ms: u32) -> u32 {
+        // Prune finished sessions first so a forgotten free() can't wedge
+        // the manager at the cap; refuse only when truly full. Both maps
+        // are pruned together (flags would otherwise leak one entry per
+        // finished session).
+        let finished: Vec<u32> = self
+            .sessions
+            .read()
+            .iter()
+            .filter(|(_, p)| !p.read().is_running)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in finished {
+            self.sessions.write().remove(&id);
+            self.cancel_flags.write().remove(&id);
+        }
+        if self.sessions.read().len() >= MAX_TRACEROUTE_SESSIONS {
+            return 0;
+        }
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
-        let max_hops = if max_hops == 0 || max_hops > 64 { 30 } else { max_hops };
-        let timeout_ms = if timeout_ms == 0 { 1500 } else { timeout_ms.min(5000) };
+        let max_hops = if max_hops == 0 || max_hops > 64 {
+            30
+        } else {
+            max_hops
+        };
+        let timeout_ms = if timeout_ms == 0 {
+            1500
+        } else {
+            timeout_ms.min(5000)
+        };
 
         let progress = Arc::new(RwLock::new(TracerouteProgress {
             session_id,
@@ -174,7 +332,9 @@ impl TracerouteManager {
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
         self.sessions.write().insert(session_id, progress.clone());
-        self.cancel_flags.write().insert(session_id, cancel_flag.clone());
+        self.cancel_flags
+            .write()
+            .insert(session_id, cancel_flag.clone());
 
         // Spawn background worker thread for stepping through hops
         std::thread::spawn(move || {
@@ -223,7 +383,7 @@ impl TracerouteManager {
         cancel_flag: Arc<AtomicBool>,
     ) {
         // Step 1: Resolve DNS to IPv4
-        let target_socket_addr = match format!("{}:0", host).to_socket_addrs() {
+        let target_socket_addr = match host_with_port(&host, 0).to_socket_addrs() {
             Ok(mut iter) => match iter.find(|sa| sa.is_ipv4()) {
                 Some(sa) => sa,
                 None => {
@@ -258,6 +418,7 @@ impl TracerouteManager {
         // network byte order: value (o1<<24)|(o2<<16)|(o3<<8)|o4, same
         // convention as u32::from(Ipv4Addr)). from_be_bytes builds that
         // numeric value from the dotted-quad octets on any platform.
+        #[cfg(windows)]
         let dest_ip_u32 = u32::from_be_bytes(target_ipv4.octets());
         {
             let mut p = progress.write();
@@ -279,8 +440,22 @@ impl TracerouteManager {
             p.error = Some("Failed to open ICMP handle".to_string());
             return;
         }
-        #[cfg(not(windows))]
-        let handle: usize = 0;
+
+        // Linux/macOS: one unprivileged ping socket for the whole trace
+        // (SOCK_DGRAM, IPPROTO_ICMP — no root needed where ping sockets
+        // are permitted). TTL-expired replies arrive via the Linux error
+        // queue or as normal datagrams on macOS.
+        #[cfg(unix)]
+        let mut unix_sock = match crate::probe::unix_icmp::IcmpSocket::open() {
+            Ok(s) => s,
+            Err(e) => {
+                let mut p = progress.write();
+                p.is_running = false;
+                p.is_completed = true;
+                p.error = Some(format!("ICMP unavailable: {}", e));
+                return;
+            }
+        };
 
         for ttl in 1..=max_hops {
             if cancel_flag.load(Ordering::SeqCst) {
@@ -299,13 +474,33 @@ impl TracerouteManager {
             let mut rtt_sum = 0.0;
             let mut hop_ip_opt = None;
             let mut reached_dest = false;
+            let mut terminal_unreachable = false;
             let mut status = "Request Timed Out".to_string();
             for _ in 0..3 {
                 if cancel_flag.load(Ordering::SeqCst) {
                     break;
                 }
-                let (ip, rtt, timed_out, reached, s) =
-                    win_icmp::probe_hop_on_handle(handle, dest_ip_u32, ttl, timeout_ms);
+                let (ip, rtt, timed_out, reached, terminal, s) = {
+                    #[cfg(windows)]
+                    {
+                        win_icmp::probe_hop_on_handle(handle, dest_ip_u32, ttl, timeout_ms)
+                    }
+                    #[cfg(unix)]
+                    {
+                        unix_probe_hop(&mut unix_sock, target_ipv4, ttl, timeout_ms)
+                    }
+                    #[cfg(not(any(windows, unix)))]
+                    {
+                        (
+                            None,
+                            -1.0,
+                            true,
+                            false,
+                            false,
+                            "Unsupported platform".to_string(),
+                        )
+                    }
+                };
                 if !timed_out {
                     samples += 1;
                     rtt_sum += rtt;
@@ -313,6 +508,7 @@ impl TracerouteManager {
                         hop_ip_opt = ip;
                     }
                     reached_dest = reached_dest || reached;
+                    terminal_unreachable = terminal_unreachable || terminal;
                     status = s;
                 }
             }
@@ -349,13 +545,20 @@ impl TracerouteManager {
                 // Reached target destination!
                 break;
             }
+            if terminal_unreachable {
+                // A router declared the destination unreachable: further
+                // TTLs cannot succeed, stop the trace at this hop.
+                break;
+            }
 
             // Small delay between hops to avoid flood
             std::thread::sleep(Duration::from_millis(60));
         }
 
         #[cfg(windows)]
-        unsafe { windows_sys::Win32::NetworkManagement::IpHelper::IcmpCloseHandle(handle) };
+        unsafe {
+            windows_sys::Win32::NetworkManagement::IpHelper::IcmpCloseHandle(handle)
+        };
 
         {
             let mut p = progress.write();

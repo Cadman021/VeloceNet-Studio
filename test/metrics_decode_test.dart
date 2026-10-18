@@ -25,6 +25,32 @@ const _sample = '''
 ]
 ''';
 
+const _httpSample = '''
+[
+  {
+    "id": 7,
+    "name": "Cloudflare HTTPS",
+    "host": "cloudflare.com",
+    "port": 443,
+    "protocol": "HTTPS",
+    "status": "Online",
+    "sent_count": 4,
+    "received_count": 4,
+    "lost_count": 0,
+    "loss_rate": 0.0,
+    "last_rtt_ms": 88.2,
+    "min_rtt_ms": 70.0,
+    "max_rtt_ms": 95.0,
+    "avg_rtt_ms": 85.0,
+    "jitter_ms": 3.1,
+    "history": [88.2],
+    "last_checked_epoch_ms": 1726857600000,
+    "http_status": 204,
+    "cert_days_left": 47
+  }
+]
+''';
+
 void main() {
   group('decodeMetricsSnapshot', () {
     test('decodes a valid native snapshot', () {
@@ -36,6 +62,15 @@ void main() {
       expect(m.sentCount, 10);
       expect(m.lostCount, 1);
       expect(m.history, [20.0, 22.5, -1.0]);
+      expect(m.httpStatus, isNull);
+      expect(m.certDaysLeft, isNull);
+    });
+
+    test('decodes HTTP status and TLS cert days', () {
+      final m = decodeMetricsSnapshot(_httpSample).single;
+      expect(m.protocol, 'HTTPS');
+      expect(m.httpStatus, 204);
+      expect(m.certDaysLeft, 47);
     });
 
     test('malformed payload yields empty list, never throws', () {

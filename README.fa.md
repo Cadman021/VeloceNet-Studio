@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.4.0](https://img.shields.io/badge/release-v1.4.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0)
+[![Release v1.5.0](https://img.shields.io/badge/release-v1.5.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -9,7 +9,7 @@
 
 استودیوی کراس‌پلتفرم **مانیتورینگ و تحلیل شبکه** ساخته‌شده با **Flutter** + **موتور Rust (توکیو، از طریق FFI)**.
 
-ماتریس زنده تاخیر (ICMP / TCP)، تریس‌روت تصویری، مانیتور پهنای باند، اسکنر اندپوینت Warp، اسکنر پورت TCP و جست‌وجوی DNS — با تم‌های روشن/تیره/سیستمی و رابط کاربری انگلیسی/فارسی/روسی/چینی.
+ماتریس زنده تاخیر (ICMP / TCP / HTTP(S) با TTFB)، تریس‌روت تصویری، مانیتور پهنای باند، اسکنر اندپوینت Warp، اسکنر پورت TCP و جست‌وجوی DNS — با تم‌های روشن/تیره/سیستمی و رابط کاربری انگلیسی/فارسی/روسی/چینی.
 
 > لایسنس: **GPL-3.0-or-later** — فایل [LICENSE](LICENSE) را ببینید.
 >
@@ -45,8 +45,8 @@
 
 ## ویژگی‌ها
 
-- **ماتریس پینگ** — پروب‌های همزمان ICMP (با IP Helper ویندوز، بدون نیاز به ادمین) + دست‌تکانی TCP، اسپارک‌لاین زنده، RTT میانگین/کمینه/بیشینه، جیتر استاندارد RFC 3550، درصد loss، **لاگ هشدار** تغییر وضعیت با بج خوانده‌نشده، **خروجی CSV** تک‌کلیکی، **بکاپ JSON** نسخه‌دار (اکسپورت + ایمپورت با چسباندن) و **تاریخچه آپتایم ۲۴ ساعته** هر تارگت با گزارش قطعی.
-- **تریس‌روت** — زنجیره تصویری هاپ با TTL + جدول داده (ICMP بومی ویندوز)، پارس IPv4/IPv6، میانگین چندنمونه‌ای RTT.
+- **ماتریس پینگ** — پروب‌های همزمان ICMP (IP Helper در ویندوز؛ سوکت ping بدون root در لینوکس/مک) + دست‌تکانی TCP + پروب‌های HTTP(S) (TTFB، کد وضعیت، انقضای گواهی TLS)، اسپارک‌لاین زنده، RTT میانگین/کمینه/بیشینه، جیتر استاندارد RFC 3550، درصد loss، **لاگ هشدار** تغییر وضعیت با بج خوانده‌نشده، **خروجی CSV** تک‌کلیکی، **بکاپ JSON** نسخه‌دار (اکسپورت + ایمپورت با چسباندن)، **تاریخچه آپتایم ۲۴ ساعته** هر تارگت با گزارش قطعی، و **گروه/برچسب** با فیلتر یک‌کلیکی.
+- **تریس‌روت** — زنجیره تصویری هاپ با TTL + جدول داده (ICMP بومی در ویندوز شامل IPv6، لینوکس و مک)، نام‌های reverse DNS هر هاپ، میانگین چندنمونه‌ای RTT، توقف زودهنگام هنگام Destination Unreachable.
 - **MTR** — یک بار trace، بعد پینگ مداوم تک‌تک هاپ‌های پاسخ‌گو (loss/avg/best/worst هر هاپ) روی نمونه جدا و ایزوله انجین.
 - **پهنای باند** — دلتای زنده هر اینترفیس با `GetIfTable2` (کانترهای ۶۴ بیتی)، پرمصرف‌ترین پروسه‌ها بر اساس سهم کانکشن (صراحتاً *تخمینی* اعلام شده).
 - **اسکنر Warp** — پروب UDP شبه-WireGuard + فالبک TCP، رتبه‌بندی، کپی در کلیپ‌بورد، افزودن تک‌کلیکی به ماتریس پینگ.
@@ -57,10 +57,10 @@
 - **بررسی به‌روزرسانی** — نظرسنجی روزانه ریلیزهای گیت‌هاب با دیالوگ شروع (دانلود/بعداً، برای هر نسخه فقط یک بار) و بررسی دستی در تنظیمات.
 - **انجین تاب‌آور** — اگر `.dll`/`.so` راست بیلد نشده باشد، برنامه خودکار با پروبر پشتیبان Dart کار می‌کند تا رابط کاربری همیشه قابل استفاده بماند.
 
-## دانلود (v1.4.0)
+## دانلود (v1.5.0)
 
 بدون نیاز به بیلد — پلتفرم خود را از
-[ریلیز v1.4.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0) بگیرید:
+[ریلیز v1.5.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0) بگیرید:
 
 | پلتفرم | فایل | اجرا |
 |---|---|---|
@@ -68,7 +68,7 @@
 | Linux x64 | `velocenet-studio-linux-x64.tar.gz` | اکسترکت کنید و باینری `netstudio` را اجرا کنید (`.so` کنارش باندل شده) |
 | macOS arm64 | `velocenet-studio-macos-arm64.zip` | اکسترکت کنید، روی `.app` راست‌کلیک → Open (بیلد امضانشده، یک بار تأیید Gatekeeper) |
 
-پروب بومی ICMP فعلاً فقط ویندوز است؛ روی لینوکس/مک این پروب‌ها شفاف به TCP برمی‌گردند. برای جزئیات این نسخه [CHANGELOG.md](CHANGELOG.md) را ببینید.
+پروب بومی ICMP روی ویندوز (IP Helper) و روی لینوکس/مک (سوکت ping بدون root) اجرا می‌شود؛ فقط جایی که سیستم‌عامل آن را رد کند، شفاف به TCP برمی‌گردد. برای جزئیات این نسخه [CHANGELOG.md](CHANGELOG.md) را ببینید.
 
 ## بیلد از سورس (ویندوز)
 
@@ -90,13 +90,13 @@ cd ..
 flutter run -d windows
 ```
 
-لینوکس/مک: `cargo build --release` فایل `libnetstudio_engine.so` / `.dylib` را می‌سازد؛ ICMP جایی که سوکت خام در دسترس نیست به TCP برمی‌گردد.
+لینوکس/مک: `cargo build --release` فایل `libnetstudio_engine.so` / `.dylib` را می‌سازد؛ ICMP از سوکت ping بدون root استفاده می‌کند و فقط در صورت رد شدن توسط سیستم‌عامل به TCP برمی‌گردد.
 
 ## چطور کار می‌کند
 
 ```
 ┌──────────── Flutter UI ────────────┐      ┌────────── Rust engine ──────────┐
-│ Ping Matrix · Traceroute · MTR     │ JSON │ Tokio probers (ICMP/TCP/TTL)    │
+│ Ping Matrix · Traceroute · MTR     │ JSON │ Tokio probers (ICMP/TCP/TLS)    │
 │ Bandwidth · Warp · Portscan · DNS  │◄────►│ stats (RTT/jitter/loss)         │
 │ SettingsController (theme+locale)  │  FFI │ traceroute / bandwidth / warp   │
 └────────────────────────────────────┘      └─────────────────────────────────┘
@@ -145,4 +145,4 @@ cd native_engine && cargo test --release && cargo clippy --release -- -D warning
 
 ## تغییرات و نقشه راه
 
-فایل [CHANGELOG.md](CHANGELOG.md) را ببینید. ایده‌های نزدیک: ICMP بومی لینوکس/مک، اندپوینت اکسپورت Prometheus، حسابداری واقعی per-process (ETW)، نوتیفیکیشن دسکتاپ برای هشدارها.
+فایل [CHANGELOG.md](CHANGELOG.md) را ببینید. ایده‌های نزدیک: اندپوینت اکسپورت Prometheus، حسابداری واقعی per-process (ETW)، نوتیفیکیشن دسکتاپ برای هشدارها.

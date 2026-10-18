@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'punycode.dart';
+
 /// Record types supported by the lookup tool.
 enum DnsQueryType {
   a(1, 'A'),
@@ -66,7 +68,17 @@ class DnsNxDomain extends DnsException {
 
 /// Builds a standard recursive query packet. Returns (packet, txid).
 (List<int>, int) buildDnsQuery(String name, int qtype) {
-  final txid = Random().nextInt(0x10000);
+  // Unpredictable txids (cache-poisoning resistance): Random.secure, not
+  // the deterministic default Random().
+  final txid = Random.secure().nextInt(0x10000);
+  // ASCII wire form: IDN labels become xn--, one trailing root dot is
+  // tolerated. codeUnits on raw unicode used to emit garbage lengths.
+  late final String ascii;
+  try {
+    ascii = toAsciiDomain(name);
+  } on FormatException catch (e) {
+    throw DnsException(e.message);
+  }
   final out = <int>[
     txid >> 8,
     txid & 0xFF,
@@ -79,18 +91,25 @@ class DnsNxDomain extends DnsException {
     0x00,
     0x00, // NSCOUNT
     0x00,
-    0x00, // ARCOUNT
+    0x01, // ARCOUNT = 1 (the EDNS OPT record below)
   ];
-  for (final label in name.split('.')) {
-    final units = label.codeUnits;
-    if (label.isEmpty || units.length > 63) {
-      throw const DnsException('Invalid domain label');
-    }
+  for (final label in ascii.split('.')) {
+    final units = label.codeUnits; // ASCII-only at this point
     out.add(units.length);
     out.addAll(units);
   }
   out.add(0); // root
   out.addAll([qtype >> 8, qtype & 0xFF, 0x00, 0x01]); // QTYPE, QCLASS=IN
+  // EDNS(0) OPT: advertise a 4096-byte UDP buffer so large answers (TXT,
+  // DNSSEC) arrive whole instead of truncated. Additional records are
+  // skipped by the decoder, so this changes nothing on the read path.
+  out.addAll([
+    0x00, // OPT NAME (root)
+    0x00, 0x29, // TYPE = 41 (OPT)
+    0x10, 0x00, // requestor UDP size = 4096
+    0x00, 0x00, 0x00, 0x00, // extended RCODE + flags
+    0x00, 0x00, // RDLEN = 0
+  ]);
   return (out, txid);
 }
 
@@ -214,7 +233,8 @@ String _parseRdata(_Reader r, int type, int rdlen) {
       while (r.offset < end) {
         final len = r.bytes[r.offset++];
         if (r.offset + len > end) throw const DnsException('Bad TXT record');
-        parts.add(String.fromCharCodes(r.bytes.sublist(r.offset, r.offset + len)));
+        parts.add(
+            String.fromCharCodes(r.bytes.sublist(r.offset, r.offset + len)));
         r.offset += len;
       }
       return parts.join(' ');
@@ -273,7 +293,8 @@ List<DnsRecord> decodeDnsResponse(List<int> packet, int txid,
       throw const DnsException('Truncated RDATA');
     }
     final data = _parseRdata(r, type, rdlen);
-    out.add(DnsRecord(name: name, type: _typeLabel(type), ttl: ttl, data: data));
+    out.add(
+        DnsRecord(name: name, type: _typeLabel(type), ttl: ttl, data: data));
   }
   return out;
 }
@@ -339,8 +360,8 @@ Future<DnsResponse> lookupDns({
         final data = dg.data;
         bool truncated = false;
         try {
-          final answers = decodeDnsResponse(data, txid,
-              onFlags: (tc) => truncated = tc);
+          final answers =
+              decodeDnsResponse(data, txid, onFlags: (tc) => truncated = tc);
           stopwatch.stop();
           if (truncated) {
             // UDP answer didn't fit: retry the same query over TCP
@@ -359,8 +380,7 @@ Future<DnsResponse> lookupDns({
               completer.complete(DnsResponse(
                 server: serverIp,
                 answers: answers,
-                queryTimeMs:
-                    (stopwatch.elapsedMicroseconds / 1000).round(),
+                queryTimeMs: (stopwatch.elapsedMicroseconds / 1000).round(),
                 truncated: true,
               ));
             }

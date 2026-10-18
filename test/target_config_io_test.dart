@@ -10,7 +10,8 @@ PingTarget _target({int id = 1, String host = '1.1.1.1'}) {
 void main() {
   group('exportTargetsJson', () {
     test('round-trips through the importer', () {
-      final json = exportTargetsJson([_target(), _target(id: 2, host: '8.8.8.8')]);
+      final json =
+          exportTargetsJson([_target(), _target(id: 2, host: '8.8.8.8')]);
       final decoded = jsonDecode(json) as Map<String, dynamic>;
       expect(decoded['app'], 'velocenet-studio');
       expect(decoded['version'], kTargetBackupVersion);
@@ -56,6 +57,28 @@ void main() {
           ['1.1.1.1', 'github.com', '2620:fe::fe']);
       expect(result.targets[1].protocol, NetworkProtocol.tcp);
       expect(result.skipped, 3);
+    });
+
+    test('parses HTTP/HTTPS protocols and sanitizes paths', () {
+      const raw = '''
+      {"targets": [
+        {"host": "example.com", "port": 443, "protocol": "HTTPS",
+         "http_path": "health"},
+        {"host": "example.com", "port": 8080, "protocol": 2,
+         "http_path": "/status"},
+        {"host": "example.com", "port": 80, "protocol": "TCP",
+         "http_path": "/ignored"}
+      ]}
+      ''';
+      final result = importTargetsJson(raw);
+      expect(result.targets, hasLength(3));
+      expect(result.targets[0].protocol, NetworkProtocol.https);
+      expect(result.targets[0].httpPath, '/health');
+      expect(result.targets[1].protocol, NetworkProtocol.http);
+      expect(result.targets[1].httpPath, '/status');
+      // Paths are meaningless (and dropped) for non-HTTP probes.
+      expect(result.targets[2].protocol, NetworkProtocol.tcp);
+      expect(result.targets[2].httpPath, '');
     });
 
     test('clamps intervals and truncates long names', () {

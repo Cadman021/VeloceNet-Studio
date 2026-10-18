@@ -22,6 +22,25 @@ jobs:
         run: flutter analyze --no-pub
       - name: Test
         run: flutter test --no-pub
+      - name: Version sync check
+        shell: pwsh
+        run: ./tool/check_versions.ps1
+
+  flutter-linux:
+    name: Flutter analyze + test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze --no-pub
+      - name: Test
+        run: flutter test --no-pub
 
   rust:
     name: Rust build + test + clippy
@@ -40,6 +59,8 @@ jobs:
         run: cargo test --release
       - name: Clippy
         run: cargo clippy --release -- -D warnings
+      - name: Format check
+        run: cargo fmt --check
 
   # Non-Windows lints rot silently when CI only builds Windows: the
   # #[cfg(not(windows))] fallback modules are never compiled there

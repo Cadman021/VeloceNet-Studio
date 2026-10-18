@@ -10,6 +10,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 abstract class SecretStore {
   Future<String?> read(String key);
   Future<void> write(String key, String value);
+
+  /// Protected write. Returns false when protection was expected (Windows)
+  /// but failed and the value landed as plaintext.
+  Future<bool> writeProtected(String key, String value);
   Future<void> delete(String key);
 }
 
@@ -23,6 +27,12 @@ class FakeSecretStore implements SecretStore {
   @override
   Future<void> write(String key, String value) async {
     vault[key] = value;
+  }
+
+  @override
+  Future<bool> writeProtected(String key, String value) async {
+    vault[key] = value;
+    return true;
   }
 
   @override
@@ -49,7 +59,10 @@ final class _DataBlob extends Struct {
   external Pointer<Uint8> pbData;
 }
 
-typedef _ProtectNative = Bool Function(
+/// NOTE: Win32 BOOL is 32-bit. Dart FFI `Bool` is 1 byte and only works
+/// here by accident (these APIs strictly return 0/1), so this uses Int32
+/// with an explicit `!= 0` check.
+typedef _ProtectNative = Int32 Function(
   Pointer<_DataBlob> dataIn,
   Pointer<Utf16> descr,
   Pointer<_DataBlob> entropy,
@@ -58,7 +71,7 @@ typedef _ProtectNative = Bool Function(
   Uint32 flags,
   Pointer<_DataBlob> dataOut,
 );
-typedef _ProtectDart = bool Function(
+typedef _ProtectDart = int Function(
   Pointer<_DataBlob> dataIn,
   Pointer<Utf16> descr,
   Pointer<_DataBlob> entropy,
@@ -96,8 +109,8 @@ class DpapiBindings {
           .lookupFunction<_ProtectNative, _ProtectDart>('CryptProtectData');
       _unprotect ??= _crypt32!
           .lookupFunction<_ProtectNative, _ProtectDart>('CryptUnprotectData');
-      _localFree ??= _kernel32!
-          .lookupFunction<_FreeNative, _FreeDart>('LocalFree');
+      _localFree ??=
+          _kernel32!.lookupFunction<_FreeNative, _FreeDart>('LocalFree');
       _getLastError ??= _kernel32!
           .lookupFunction<_GetErrorNative, _GetErrorDart>('GetLastError');
       return true;
@@ -125,14 +138,15 @@ class DpapiBindings {
       inBlob.ref.cbData = plain.length;
       inBlob.ref.pbData = inBytes;
       final ok = _protect!(
-        inBlob,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        _cryptProtectUiForbidden,
-        outBlob,
-      );
+            inBlob,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            _cryptProtectUiForbidden,
+            outBlob,
+          ) !=
+          0;
       if (!ok) return null;
       final outPtr = outBlob.ref.pbData;
       final outLen = outBlob.ref.cbData;
@@ -163,14 +177,15 @@ class DpapiBindings {
       inBlob.ref.cbData = cipher.length;
       inBlob.ref.pbData = inBytes;
       final ok = _unprotect!(
-        inBlob,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        _cryptProtectUiForbidden,
-        outBlob,
-      );
+            inBlob,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            _cryptProtectUiForbidden,
+            outBlob,
+          ) !=
+          0;
       if (!ok) return null;
       final outPtr = outBlob.ref.pbData;
       final outLen = outBlob.ref.cbData;
@@ -208,8 +223,7 @@ class PlatformSecretStore implements SecretStore {
   final Future<SharedPreferences> Function() _prefsOf;
   final DpapiBindings _dpapi = DpapiBindings();
 
-  PlatformSecretStore(
-      {Future<SharedPreferences> Function()? prefsProvider})
+  PlatformSecretStore({Future<SharedPreferences> Function()? prefsProvider})
       : _prefsOf = prefsProvider ?? SharedPreferences.getInstance;
 
   /// Translates stored values: `dpapi1:<base64>` → plaintext,
@@ -228,28 +242,58 @@ class PlatformSecretStore implements SecretStore {
     }
   }
 
-  /// Encodes for storage: DPAPI-protected on Windows, plaintext elsewhere.
-  String encodeForStorage(String value) {
+  /// Encodes for storage, reporting whether protection actually applied.
+  /// A `protected: false` result on Windows means DPAPI failed and the
+  /// value would land as plaintext — callers MUST surface that instead of
+  /// swallowing it (silent fallback was a real bug class here).
+  ({String stored, bool protected}) encodeForStorage(String value) {
     if (Platform.isWindows) {
       try {
-        final cipher =
-            _dpapi.protect(Uint8List.fromList(utf8.encode(value)));
-        if (cipher != null) return kDpapiPrefix + base64Encode(cipher);
+        final cipher = _dpapi.protect(Uint8List.fromList(utf8.encode(value)));
+        if (cipher != null) {
+          return (stored: kDpapiPrefix + base64Encode(cipher), protected: true);
+        }
       } catch (_) {}
+      return (stored: value, protected: false);
     }
-    return value;
+    return (stored: value, protected: true); // plaintext by design elsewhere
   }
 
   @override
   Future<String?> read(String key) async {
     final prefs = await _prefsOf();
-    return decodeStored(prefs.getString(key));
+    final raw = prefs.getString(key);
+    if (raw == null || raw.isEmpty) return null;
+    if (!raw.startsWith(kDpapiPrefix)) {
+      // Legacy plaintext: upgrade NOW on load (not "on next write"), so a
+      // single app start is enough to migrate every secret.
+      if (Platform.isWindows && raw.isNotEmpty) {
+        try {
+          final upgraded = encodeForStorage(raw);
+          if (upgraded.protected) {
+            await prefs.setString(key, upgraded.stored);
+          }
+        } catch (_) {}
+      }
+      return raw;
+    }
+    return decodeStored(raw);
+  }
+
+  /// Stores a value. Returns false when DPAPI was expected but failed and
+  /// the value landed as plaintext — the controller surfaces that to the
+  /// user instead of staying silent.
+  @override
+  Future<bool> writeProtected(String key, String value) async {
+    final prefs = await _prefsOf();
+    final encoded = encodeForStorage(value);
+    await prefs.setString(key, encoded.stored);
+    return encoded.protected;
   }
 
   @override
   Future<void> write(String key, String value) async {
-    final prefs = await _prefsOf();
-    await prefs.setString(key, encodeForStorage(value));
+    await writeProtected(key, value);
   }
 
   @override

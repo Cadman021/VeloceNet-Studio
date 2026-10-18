@@ -29,8 +29,7 @@ class MainShellView extends StatefulWidget {
   State<MainShellView> createState() => _MainShellViewState();
 }
 
-class _MainShellViewState extends State<MainShellView>
-    with WindowListener {
+class _MainShellViewState extends State<MainShellView> with WindowListener {
   int _selectedIndex = 0;
   late final PingMatrixController _pingController;
   late final WarpController _warpController;
@@ -43,7 +42,7 @@ class _MainShellViewState extends State<MainShellView>
   void initState() {
     super.initState();
     _pingController = PingMatrixController();
-    _pingController.init();
+    unawaited(_pingController.init());
     _warpController = WarpController();
     // Live alert delivery: reads the current webhook config on every event,
     // so toggling in Settings takes effect without restarts.
@@ -65,6 +64,10 @@ class _MainShellViewState extends State<MainShellView>
       ),
     );
     widget.settings.addListener(_onSettingsChanged);
+    _pingController.configureAlerts(
+      offlineAfter: widget.settings.alertOfflineAfter,
+      recoverAfter: widget.settings.alertRecoverAfter,
+    );
     _setupTray();
     // Daily-throttled update check, delayed so it never contends with
     // first-frame work. Failures stay silent (see _UpdateRow for the
@@ -100,6 +103,11 @@ class _MainShellViewState extends State<MainShellView>
     } else if (widget.settings.trayEnabled) {
       _refreshTrayMenu();
     }
+    // Alert thresholds apply live to both engines (no restart needed).
+    _pingController.configureAlerts(
+      offlineAfter: widget.settings.alertOfflineAfter,
+      recoverAfter: widget.settings.alertRecoverAfter,
+    );
   }
 
   /// Best-effort tray setup (tray_manager 0.8 native API): any step may
@@ -140,9 +148,7 @@ class _MainShellViewState extends State<MainShellView>
 
   Future<void> _refreshTrayMenu() async {
     final icon = _trayIcon;
-    if (icon == null ||
-        !_trayReady ||
-        !widget.settings.trayEnabled) {
+    if (icon == null || !_trayReady || !widget.settings.trayEnabled) {
       return;
     }
     try {
@@ -211,7 +217,10 @@ class _MainShellViewState extends State<MainShellView>
     // Assign fresh IDs above the max existing target id.
     int nextId = _pingController.targets.isEmpty
         ? 1
-        : _pingController.targets.map((t) => t.id).reduce((a, b) => a > b ? a : b) + 1;
+        : _pingController.targets
+                .map((t) => t.id)
+                .reduce((a, b) => a > b ? a : b) +
+            1;
     for (final e in endpoints) {
       final ip = e['ip']?.toString() ?? '';
       if (ip.isEmpty || ip.length > 253) continue;
@@ -263,7 +272,8 @@ class _MainShellViewState extends State<MainShellView>
                 children: [
                   // Brand Header
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 20),
                     child: Row(
                       children: [
                         Container(
@@ -281,7 +291,8 @@ class _MainShellViewState extends State<MainShellView>
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.hub_rounded, color: Colors.white, size: 20),
+                          child: const Icon(Icons.hub_rounded,
+                              color: Colors.white, size: 20),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
@@ -369,7 +380,8 @@ class _MainShellViewState extends State<MainShellView>
                   AnimatedBuilder(
                     animation: _pingController,
                     builder: (context, _) {
-                      final bool isNative = _pingController.isNativeEngineActive;
+                      final bool isNative =
+                          _pingController.isNativeEngineActive;
                       return Container(
                         padding: const EdgeInsets.all(16),
                         child: Column(
@@ -381,7 +393,9 @@ class _MainShellViewState extends State<MainShellView>
                                   width: 8,
                                   height: 8,
                                   decoration: BoxDecoration(
-                                    color: isNative ? AppColors.latencyFast : AppColors.latencyModerate,
+                                    color: isNative
+                                        ? AppColors.latencyFast
+                                        : AppColors.latencyModerate,
                                     shape: BoxShape.circle,
                                   ),
                                 ),
@@ -392,7 +406,9 @@ class _MainShellViewState extends State<MainShellView>
                                         ? strings.get('engineNative')
                                         : strings.get('engineFallback'),
                                     style: TextStyle(
-                                      color: isNative ? AppColors.latencyFast : AppColors.latencyModerate,
+                                      color: isNative
+                                          ? AppColors.latencyFast
+                                          : AppColors.latencyModerate,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -460,10 +476,14 @@ class _MainShellViewState extends State<MainShellView>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: isSelected ? AppColors.primary.withValues(alpha: 0.15) : Colors.transparent,
+            color: isSelected
+                ? AppColors.primary.withValues(alpha: 0.15)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isSelected ? AppColors.primary.withValues(alpha: 0.4) : Colors.transparent,
+              color: isSelected
+                  ? AppColors.primary.withValues(alpha: 0.4)
+                  : Colors.transparent,
             ),
           ),
           child: Row(
@@ -471,7 +491,8 @@ class _MainShellViewState extends State<MainShellView>
               Icon(
                 icon,
                 size: 18,
-                color: isSelected ? AppColors.primary : context.textSecondaryColor,
+                color:
+                    isSelected ? AppColors.primary : context.textSecondaryColor,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -479,8 +500,11 @@ class _MainShellViewState extends State<MainShellView>
                   label,
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                    color: isSelected ? context.textPrimaryColor : context.textSecondaryColor,
+                    fontWeight:
+                        isSelected ? FontWeight.w600 : FontWeight.normal,
+                    color: isSelected
+                        ? context.textPrimaryColor
+                        : context.textSecondaryColor,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -488,7 +512,8 @@ class _MainShellViewState extends State<MainShellView>
               if (badge != null) ...[
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: isSelected ? AppColors.primary : context.bgColor,
                     borderRadius: BorderRadius.circular(10),

@@ -18,6 +18,8 @@ pub struct TargetConfig {
     pub protocol: ProbeProtocol,
     pub interval_ms: u64,
     pub timeout_ms: u64,
+    /// HTTP(S) only: request path, e.g. "/health". Empty means "/".
+    pub http_path: String,
 }
 
 pub struct Engine {
@@ -134,8 +136,9 @@ impl Engine {
     }
 
     pub fn get_metrics_snapshot(&self) -> Vec<TargetStats> {
-        let trackers = self.trackers.read();
-        let mut list: Vec<TargetStats> = trackers.values().map(|t| t.snapshot()).collect();
+        // Write lock: snapshot() advances hysteresis state (prev_status).
+        let mut trackers = self.trackers.write();
+        let mut list: Vec<TargetStats> = trackers.values_mut().map(|t| t.snapshot()).collect();
         list.sort_by_key(|t| t.id);
         list
     }
@@ -161,9 +164,15 @@ impl Engine {
         // period by the probe duration (period + RTT). `interval` ticks on a
         // fixed schedule instead; `Skip` drops catch-up ticks after a slow
         // probe rather than bursting.
-        let mut ticker =
-            tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        // TCP address cache: DNS on every tick wastes a lookup per probe
+        // and pins round-robin names to one answer. Refresh every ~5 min
+        // (300 ticks at the 1s default) so re-resolved addresses converge
+        // without per-tick cost. ICMP needs no resolution at all.
+        let mut cached_addrs: Option<Vec<std::net::SocketAddr>> = None;
+        let mut tick_count: u32 = 0;
 
         loop {
             tokio::select! {
@@ -171,9 +180,49 @@ impl Engine {
                     break;
                 }
                 _ = ticker.tick() => {
-                    let res = execute_probe(config.protocol, &config.host, config.port, timeout_dur).await;
+                    tick_count = tick_count.wrapping_add(1);
+                    let res = if config.protocol == crate::probe::ProbeProtocol::Tcp {
+                        if cached_addrs.is_none() || tick_count.is_multiple_of(300) {
+                            cached_addrs = crate::probe::tcp::resolve_target_addrs(
+                                &config.host,
+                                config.port,
+                                timeout_dur,
+                            )
+                            .await
+                            .ok();
+                        }
+                        match &cached_addrs {
+                            Some(addrs) if !addrs.is_empty() => {
+                                crate::probe::tcp::probe_tcp_addrs(addrs, timeout_dur).await
+                            }
+                            _ => {
+                                execute_probe(
+                                    config.protocol,
+                                    &config.host,
+                                    config.port,
+                                    &config.http_path,
+                                    timeout_dur,
+                                )
+                                .await
+                            }
+                        }
+                    } else {
+                        execute_probe(
+                            config.protocol,
+                            &config.host,
+                            config.port,
+                            &config.http_path,
+                            timeout_dur,
+                        )
+                        .await
+                    };
                     if let Some(tracker) = trackers.write().get_mut(&config.id) {
-                        tracker.record_sample(res.success, res.rtt_ms);
+                        tracker.record_sample(
+                            res.success,
+                            res.rtt_ms,
+                            res.http_status,
+                            res.cert_days_left,
+                        );
                     }
                 }
             }
@@ -184,5 +233,12 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         self.stop();
+        // Dropping a Tokio runtime BLOCKS until in-flight blocking tasks
+        // (ICMP/DNS probes, up to ~10s) finish — unacceptable on the Dart
+        // UI thread that calls freeEngine. shutdown_background() moves that
+        // wait onto a helper thread and returns immediately.
+        if let Some(rt) = self.runtime.take() {
+            rt.shutdown_background();
+        }
     }
 }

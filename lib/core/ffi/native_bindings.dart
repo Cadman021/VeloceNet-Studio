@@ -2,15 +2,17 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'native_library.dart';
 
-// Native function C typedefs
-typedef NetstudioEngineNewNative = Pointer<Void> Function();
-typedef NetstudioEngineNewDart = Pointer<Void> Function();
+// Engine handles are opaque numeric ids owned by the Rust side (0 = invalid),
+// not raw pointers: a stale or double free from Dart can never dereference
+// freed memory.
+typedef NetstudioEngineNewNative = Uint32 Function();
+typedef NetstudioEngineNewDart = int Function();
 
-typedef NetstudioEngineFreeNative = Void Function(Pointer<Void>);
-typedef NetstudioEngineFreeDart = void Function(Pointer<Void>);
+typedef NetstudioEngineFreeNative = Void Function(Uint32);
+typedef NetstudioEngineFreeDart = void Function(int);
 
 typedef NetstudioAddTargetNative = Bool Function(
-  Pointer<Void> engine,
+  Uint32 engine,
   Uint32 id,
   Pointer<Utf8> name,
   Pointer<Utf8> host,
@@ -18,9 +20,10 @@ typedef NetstudioAddTargetNative = Bool Function(
   Uint32 protocol,
   Uint64 intervalMs,
   Uint64 timeoutMs,
+  Pointer<Utf8> path,
 );
 typedef NetstudioAddTargetDart = bool Function(
-  Pointer<Void> engine,
+  int engine,
   int id,
   Pointer<Utf8> name,
   Pointer<Utf8> host,
@@ -28,22 +31,23 @@ typedef NetstudioAddTargetDart = bool Function(
   int protocol,
   int intervalMs,
   int timeoutMs,
+  Pointer<Utf8> path,
 );
 
-typedef NetstudioRemoveTargetNative = Bool Function(Pointer<Void>, Uint32);
-typedef NetstudioRemoveTargetDart = bool Function(Pointer<Void>, int);
+typedef NetstudioRemoveTargetNative = Bool Function(Uint32, Uint32);
+typedef NetstudioRemoveTargetDart = bool Function(int, int);
 
-typedef NetstudioStartNative = Bool Function(Pointer<Void>);
-typedef NetstudioStartDart = bool Function(Pointer<Void>);
+typedef NetstudioStartNative = Bool Function(Uint32);
+typedef NetstudioStartDart = bool Function(int);
 
-typedef NetstudioStopNative = Bool Function(Pointer<Void>);
-typedef NetstudioStopDart = bool Function(Pointer<Void>);
+typedef NetstudioStopNative = Bool Function(Uint32);
+typedef NetstudioStopDart = bool Function(int);
 
-typedef NetstudioIsRunningNative = Bool Function(Pointer<Void>);
-typedef NetstudioIsRunningDart = bool Function(Pointer<Void>);
+typedef NetstudioIsRunningNative = Bool Function(Uint32);
+typedef NetstudioIsRunningDart = bool Function(int);
 
-typedef NetstudioGetMetricsJsonNative = Pointer<Utf8> Function(Pointer<Void>);
-typedef NetstudioGetMetricsJsonDart = Pointer<Utf8> Function(Pointer<Void>);
+typedef NetstudioGetMetricsJsonNative = Pointer<Utf8> Function(Uint32);
+typedef NetstudioGetMetricsJsonDart = Pointer<Utf8> Function(int);
 
 typedef NetstudioFreeStringNative = Void Function(Pointer<Utf8>);
 typedef NetstudioFreeStringDart = void Function(Pointer<Utf8>);
@@ -59,7 +63,8 @@ typedef NetstudioTracerouteStartDart = int Function(
   int timeoutMs,
 );
 
-typedef NetstudioTraceroutePollNative = Pointer<Utf8> Function(Uint32 sessionId);
+typedef NetstudioTraceroutePollNative = Pointer<Utf8> Function(
+    Uint32 sessionId);
 typedef NetstudioTraceroutePollDart = Pointer<Utf8> Function(int sessionId);
 
 typedef NetstudioTracerouteStopNative = Bool Function(Uint32 sessionId);
@@ -80,6 +85,11 @@ typedef NetstudioBandwidthPollDart = Pointer<Utf8> Function();
 typedef NetstudioBandwidthIsRunningNative = Bool Function();
 typedef NetstudioBandwidthIsRunningDart = bool Function();
 
+typedef NetstudioSetAlertThresholdsNative = Void Function(
+    Uint32 offlineAfter, Uint32 recoverAfter);
+typedef NetstudioSetAlertThresholdsDart = void Function(
+    int offlineAfter, int recoverAfter);
+
 typedef NetstudioWarpStartNative = Uint32 Function(
   Pointer<Utf8> endpointsCsv,
   Uint32 parallel,
@@ -91,8 +101,10 @@ typedef NetstudioWarpStartDart = int Function(
   int timeoutMs,
 );
 
-typedef NetstudioWarpPollNative = Pointer<Utf8> Function(Uint32 sessionId);
-typedef NetstudioWarpPollDart = Pointer<Utf8> Function(int sessionId);
+typedef NetstudioWarpPollSinceNative = Pointer<Utf8> Function(
+    Uint32 sessionId, Uint32 sinceIndex);
+typedef NetstudioWarpPollSinceDart = Pointer<Utf8> Function(
+    int sessionId, int sinceIndex);
 
 typedef NetstudioWarpStopNative = Bool Function(Uint32 sessionId);
 typedef NetstudioWarpStopDart = bool Function(int sessionId);
@@ -108,6 +120,7 @@ class NativeBindings {
 
   NetstudioEngineNewDart? _engineNew;
   NetstudioEngineFreeDart? _engineFree;
+  NetstudioSetAlertThresholdsDart? _setAlertThresholds;
   NetstudioAddTargetDart? _addTarget;
   NetstudioRemoveTargetDart? _removeTarget;
   NetstudioStartDart? _start;
@@ -127,7 +140,7 @@ class NativeBindings {
   NetstudioBandwidthIsRunningDart? _bandwidthIsRunning;
 
   NetstudioWarpStartDart? _warpStart;
-  NetstudioWarpPollDart? _warpPoll;
+  NetstudioWarpPollSinceDart? _warpPoll;
   NetstudioWarpStopDart? _warpStop;
   NetstudioWarpFreeDart? _warpFree;
 
@@ -135,78 +148,114 @@ class NativeBindings {
     final lib = _lib;
     if (lib != null) {
       try {
-        _engineNew = lib.lookupFunction<NetstudioEngineNewNative, NetstudioEngineNewDart>('netstudio_engine_new');
+        _engineNew = lib.lookupFunction<NetstudioEngineNewNative,
+            NetstudioEngineNewDart>('netstudio_engine_new');
       } catch (_) {}
       try {
-        _engineFree = lib.lookupFunction<NetstudioEngineFreeNative, NetstudioEngineFreeDart>('netstudio_engine_free');
+        _engineFree = lib.lookupFunction<NetstudioEngineFreeNative,
+            NetstudioEngineFreeDart>('netstudio_engine_free');
       } catch (_) {}
       try {
-        _addTarget = lib.lookupFunction<NetstudioAddTargetNative, NetstudioAddTargetDart>('netstudio_add_target');
+        _setAlertThresholds = lib.lookupFunction<
+            NetstudioSetAlertThresholdsNative,
+            NetstudioSetAlertThresholdsDart>('netstudio_set_alert_thresholds');
       } catch (_) {}
       try {
-        _removeTarget = lib.lookupFunction<NetstudioRemoveTargetNative, NetstudioRemoveTargetDart>('netstudio_remove_target');
+        _addTarget = lib.lookupFunction<NetstudioAddTargetNative,
+            NetstudioAddTargetDart>('netstudio_add_target');
       } catch (_) {}
       try {
-        _start = lib.lookupFunction<NetstudioStartNative, NetstudioStartDart>('netstudio_start');
+        _removeTarget = lib.lookupFunction<NetstudioRemoveTargetNative,
+            NetstudioRemoveTargetDart>('netstudio_remove_target');
       } catch (_) {}
       try {
-        _stop = lib.lookupFunction<NetstudioStopNative, NetstudioStopDart>('netstudio_stop');
+        _start = lib.lookupFunction<NetstudioStartNative, NetstudioStartDart>(
+            'netstudio_start');
       } catch (_) {}
       try {
-        _isRunning = lib.lookupFunction<NetstudioIsRunningNative, NetstudioIsRunningDart>('netstudio_is_running');
+        _stop = lib.lookupFunction<NetstudioStopNative, NetstudioStopDart>(
+            'netstudio_stop');
       } catch (_) {}
       try {
-        _getMetricsJson = lib.lookupFunction<NetstudioGetMetricsJsonNative, NetstudioGetMetricsJsonDart>('netstudio_get_metrics_json');
+        _isRunning = lib.lookupFunction<NetstudioIsRunningNative,
+            NetstudioIsRunningDart>('netstudio_is_running');
       } catch (_) {}
       try {
-        _freeString = lib.lookupFunction<NetstudioFreeStringNative, NetstudioFreeStringDart>('netstudio_free_string');
+        _getMetricsJson = lib.lookupFunction<NetstudioGetMetricsJsonNative,
+            NetstudioGetMetricsJsonDart>('netstudio_get_metrics_json');
       } catch (_) {}
       try {
-        _tracerouteStart = lib.lookupFunction<NetstudioTracerouteStartNative, NetstudioTracerouteStartDart>('netstudio_traceroute_start');
+        _freeString = lib.lookupFunction<NetstudioFreeStringNative,
+            NetstudioFreeStringDart>('netstudio_free_string');
       } catch (_) {}
       try {
-        _traceroutePoll = lib.lookupFunction<NetstudioTraceroutePollNative, NetstudioTraceroutePollDart>('netstudio_traceroute_poll');
+        _tracerouteStart = lib.lookupFunction<NetstudioTracerouteStartNative,
+            NetstudioTracerouteStartDart>('netstudio_traceroute_start');
       } catch (_) {}
       try {
-        _tracerouteStop = lib.lookupFunction<NetstudioTracerouteStopNative, NetstudioTracerouteStopDart>('netstudio_traceroute_stop');
+        _traceroutePoll = lib.lookupFunction<NetstudioTraceroutePollNative,
+            NetstudioTraceroutePollDart>('netstudio_traceroute_poll');
       } catch (_) {}
       try {
-        _tracerouteFree = lib.lookupFunction<NetstudioTracerouteFreeNative, NetstudioTracerouteFreeDart>('netstudio_traceroute_free');
+        _tracerouteStop = lib.lookupFunction<NetstudioTracerouteStopNative,
+            NetstudioTracerouteStopDart>('netstudio_traceroute_stop');
+      } catch (_) {}
+      try {
+        _tracerouteFree = lib.lookupFunction<NetstudioTracerouteFreeNative,
+            NetstudioTracerouteFreeDart>('netstudio_traceroute_free');
       } catch (_) {}
 
       try {
-        _bandwidthStart = lib.lookupFunction<NetstudioBandwidthStartNative, NetstudioBandwidthStartDart>('netstudio_bandwidth_start');
+        _bandwidthStart = lib.lookupFunction<NetstudioBandwidthStartNative,
+            NetstudioBandwidthStartDart>('netstudio_bandwidth_start');
       } catch (_) {}
       try {
-        _bandwidthStop = lib.lookupFunction<NetstudioBandwidthStopNative, NetstudioBandwidthStopDart>('netstudio_bandwidth_stop');
+        _bandwidthStop = lib.lookupFunction<NetstudioBandwidthStopNative,
+            NetstudioBandwidthStopDart>('netstudio_bandwidth_stop');
       } catch (_) {}
       try {
-        _bandwidthPoll = lib.lookupFunction<NetstudioBandwidthPollNative, NetstudioBandwidthPollDart>('netstudio_bandwidth_poll');
+        _bandwidthPoll = lib.lookupFunction<NetstudioBandwidthPollNative,
+            NetstudioBandwidthPollDart>('netstudio_bandwidth_poll');
       } catch (_) {}
       try {
-        _bandwidthIsRunning = lib.lookupFunction<NetstudioBandwidthIsRunningNative, NetstudioBandwidthIsRunningDart>('netstudio_bandwidth_is_running');
+        _bandwidthIsRunning = lib.lookupFunction<
+            NetstudioBandwidthIsRunningNative,
+            NetstudioBandwidthIsRunningDart>('netstudio_bandwidth_is_running');
       } catch (_) {}
 
       try {
-        _warpStart = lib.lookupFunction<NetstudioWarpStartNative, NetstudioWarpStartDart>('netstudio_warp_start');
+        _warpStart = lib.lookupFunction<NetstudioWarpStartNative,
+            NetstudioWarpStartDart>('netstudio_warp_start');
       } catch (_) {}
       try {
-        _warpPoll = lib.lookupFunction<NetstudioWarpPollNative, NetstudioWarpPollDart>('netstudio_warp_poll');
+        _warpPoll = lib.lookupFunction<NetstudioWarpPollSinceNative,
+            NetstudioWarpPollSinceDart>('netstudio_warp_poll_since');
       } catch (_) {}
       try {
-        _warpStop = lib.lookupFunction<NetstudioWarpStopNative, NetstudioWarpStopDart>('netstudio_warp_stop');
+        _warpStop =
+            lib.lookupFunction<NetstudioWarpStopNative, NetstudioWarpStopDart>(
+                'netstudio_warp_stop');
       } catch (_) {}
       try {
-        _warpFree = lib.lookupFunction<NetstudioWarpFreeNative, NetstudioWarpFreeDart>('netstudio_warp_free');
+        _warpFree =
+            lib.lookupFunction<NetstudioWarpFreeNative, NetstudioWarpFreeDart>(
+                'netstudio_warp_free');
       } catch (_) {}
     }
   }
 
   bool get isReady => _lib != null && _engineNew != null && _engineFree != null;
   bool get isTracerouteReady =>
-      _lib != null && _tracerouteStart != null && _traceroutePoll != null && _tracerouteStop != null && _tracerouteFree != null;
+      _lib != null &&
+      _tracerouteStart != null &&
+      _traceroutePoll != null &&
+      _tracerouteStop != null &&
+      _tracerouteFree != null;
   bool get isBandwidthReady =>
-      _lib != null && _bandwidthStart != null && _bandwidthPoll != null && _bandwidthStop != null;
+      _lib != null &&
+      _bandwidthStart != null &&
+      _bandwidthPoll != null &&
+      _bandwidthStop != null;
 
   static bool isValidHost(String host) {
     if (host.isEmpty || host.length > 253) return false;
@@ -215,15 +264,33 @@ class NativeBindings {
   }
 
   static bool isValidPort(int port) => port >= 1 && port <= 65535;
-  static bool isValidProtocol(int p) => p == 0 || p == 1;
+  static bool isValidProtocol(int p) => p >= 0 && p <= 3;
+  static bool isValidHttpPath(String path) =>
+      path.isEmpty ||
+      (path.length <= 256 &&
+          path.startsWith('/') &&
+          !RegExp(r'[\x00-\x1F\x7F]').hasMatch(path));
   static int clampInterval(int v) => v.clamp(200, 60000);
   static int clampTimeout(int v) => v.clamp(100, 10000);
 
-  Pointer<Void>? createEngine() => _engineNew?.call();
-  void freeEngine(Pointer<Void> engine) => _engineFree?.call(engine);
+  int createEngine() => _engineNew?.call() ?? 0;
+  void freeEngine(int engine) {
+    if (engine != 0) {
+      _engineFree?.call(engine);
+    }
+  }
+
+  /// Process-wide alert thresholds (clamped 1..20 engine-side). No-op when
+  /// the native library is absent (Dart fallback mirrors them separately).
+  void setAlertThresholds(int offlineAfter, int recoverAfter) {
+    _setAlertThresholds?.call(
+      offlineAfter.clamp(1, 20),
+      recoverAfter.clamp(1, 20),
+    );
+  }
 
   bool addTarget(
-    Pointer<Void> engine,
+    int engine,
     int id,
     String name,
     String host,
@@ -231,12 +298,22 @@ class NativeBindings {
     int protocol,
     int intervalMs,
     int timeoutMs,
+    String httpPath,
   ) {
-    if (_addTarget == null) return false;
-    if (!isValidHost(host) || !isValidPort(port) || !isValidProtocol(protocol)) return false;
-    final safeName = name.isEmpty ? host : name.substring(0, name.length.clamp(0, 128));
+    if (_addTarget == null) {
+      return false;
+    }
+    if (!isValidHost(host) ||
+        !isValidPort(port) ||
+        !isValidProtocol(protocol) ||
+        !isValidHttpPath(httpPath)) {
+      return false;
+    }
+    final safeName =
+        name.isEmpty ? host : name.substring(0, name.length.clamp(0, 128));
     final namePtr = safeName.toNativeUtf8();
     final hostPtr = host.toNativeUtf8();
+    final pathPtr = httpPath.toNativeUtf8();
     try {
       return _addTarget!(
         engine,
@@ -247,19 +324,22 @@ class NativeBindings {
         protocol,
         clampInterval(intervalMs),
         clampTimeout(timeoutMs),
+        pathPtr,
       );
     } finally {
       calloc.free(namePtr);
       calloc.free(hostPtr);
+      calloc.free(pathPtr);
     }
   }
 
-  bool removeTarget(Pointer<Void> engine, int id) => _removeTarget?.call(engine, id) ?? false;
-  bool startEngine(Pointer<Void> engine) => _start?.call(engine) ?? false;
-  bool stopEngine(Pointer<Void> engine) => _stop?.call(engine) ?? false;
-  bool isEngineRunning(Pointer<Void> engine) => _isRunning?.call(engine) ?? false;
+  bool removeTarget(int engine, int id) =>
+      _removeTarget?.call(engine, id) ?? false;
+  bool startEngine(int engine) => _start?.call(engine) ?? false;
+  bool stopEngine(int engine) => _stop?.call(engine) ?? false;
+  bool isEngineRunning(int engine) => _isRunning?.call(engine) ?? false;
 
-  String? getMetricsJson(Pointer<Void> engine) {
+  String? getMetricsJson(int engine) {
     if (_getMetricsJson == null || _freeString == null) return null;
     final strPtr = _getMetricsJson!(engine);
     if (strPtr == nullptr) return null;
@@ -275,14 +355,17 @@ class NativeBindings {
     if (!isValidHost(host)) return 0;
     final hostPtr = host.toNativeUtf8();
     try {
-      return _tracerouteStart!(hostPtr, maxHops.clamp(1, 64), clampTimeout(timeoutMs));
+      return _tracerouteStart!(
+          hostPtr, maxHops.clamp(1, 64), clampTimeout(timeoutMs));
     } finally {
       calloc.free(hostPtr);
     }
   }
 
   String? pollTraceroute(int sessionId) {
-    if (_traceroutePoll == null || _freeString == null || sessionId == 0) return null;
+    if (_traceroutePoll == null || _freeString == null || sessionId == 0) {
+      return null;
+    }
     final strPtr = _traceroutePoll!(sessionId);
     if (strPtr == nullptr) return null;
     try {
@@ -328,7 +411,8 @@ class NativeBindings {
     return _bandwidthIsRunning!();
   }
 
-  bool get isWarpReady => _lib != null && _warpStart != null && _warpPoll != null;
+  bool get isWarpReady =>
+      _lib != null && _warpStart != null && _warpPoll != null;
 
   /// Max endpoints per scan to avoid multi-MB CSV / OOM in native code.
   static const int maxWarpEndpoints = 4096;
@@ -349,15 +433,18 @@ class NativeBindings {
     }
     final csvPtr = endpointsCsv.toNativeUtf8();
     try {
-      return _warpStart!(csvPtr, parallel.clamp(1, 64), clampTimeout(timeoutMs));
+      return _warpStart!(
+          csvPtr, parallel.clamp(1, 64), clampTimeout(timeoutMs));
     } finally {
       calloc.free(csvPtr);
     }
   }
 
-  String? pollWarp(int sessionId) {
+  /// Incremental warp poll: returns counters plus only the results
+  /// appended since [sinceIndex] (see `WarpDelta` on the Rust side).
+  String? pollWarpSince(int sessionId, int sinceIndex) {
     if (_warpPoll == null || _freeString == null || sessionId == 0) return null;
-    final strPtr = _warpPoll!(sessionId);
+    final strPtr = _warpPoll!(sessionId, sinceIndex);
     if (strPtr == nullptr) return null;
     try {
       return strPtr.toDartString();

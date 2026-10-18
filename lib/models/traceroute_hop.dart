@@ -28,4 +28,16 @@ class TracerouteHop {
       status: json['status'] as String? ?? '',
     );
   }
+
+  TracerouteHop copyWith({String? hostname}) {
+    return TracerouteHop(
+      hopNum: hopNum,
+      ip: ip,
+      hostname: hostname ?? this.hostname,
+      rttMs: rttMs,
+      isTimeout: isTimeout,
+      reachedDestination: reachedDestination,
+      status: status,
+    );
+  }
 }

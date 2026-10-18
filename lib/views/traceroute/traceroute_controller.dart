@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../../core/ffi/native_bindings.dart';
+import '../../core/validation/host_validator.dart';
 import '../../models/traceroute_hop.dart';
 import '../../models/traceroute_progress.dart';
 
@@ -15,11 +16,22 @@ class TracerouteController extends ChangeNotifier {
   Process? _fallbackProcess;
   StreamSubscription<String>? _fallbackSub;
   bool _isUsingNative = false;
+  // One-shot guard: if the native worker dies because the OS refused ICMP
+  // (no ping-socket permission on Linux/macOS, IcmpCreateFile failure on
+  // Windows), fall back to the system prober once instead of looping.
+  bool _nativeFallbackTried = false;
   // Generation counter: async callbacks from a previous run (stdout lines,
   // exit codes, DNS lookups) are ignored once a new run starts or stop()
   // is called. Without this, a killed process's buffered output would
   // overwrite the new trace's progress (stale-write race).
   int _runId = 0;
+  // Reverse DNS runs here, not in the native worker: a PTR lookup can block
+  // for seconds per hop and would stretch the hop timeout. Results are
+  // cached per IP and overlaid on every poll snapshot (the engine sends
+  // hostname = null).
+  final Map<String, String> _reverseNames = {};
+  final Set<String> _reverseTried = {};
+  bool _reverseBusy = false;
 
   TracerouteProgress get progress => _progress;
   bool get isRunning => _progress.isRunning;
@@ -29,10 +41,12 @@ class TracerouteController extends ChangeNotifier {
 
   int get totalHops => _progress.hops.length;
   bool get reachedDestination =>
-      _progress.hops.isNotEmpty && _progress.hops.any((h) => h.reachedDestination);
+      _progress.hops.isNotEmpty &&
+      _progress.hops.any((h) => h.reachedDestination);
 
   double get averageRtt {
-    final validHops = _progress.hops.where((h) => !h.isTimeout && h.rttMs > 0).toList();
+    final validHops =
+        _progress.hops.where((h) => !h.isTimeout && h.rttMs > 0).toList();
     if (validHops.isEmpty) return 0.0;
     final sum = validHops.fold<double>(0.0, (acc, h) => acc + h.rttMs);
     return sum / validHops.length;
@@ -41,42 +55,17 @@ class TracerouteController extends ChangeNotifier {
   int get timeoutCount => _progress.hops.where((h) => h.isTimeout).length;
 
   double get minRtt {
-    final validHops = _progress.hops.where((h) => !h.isTimeout && h.rttMs > 0).toList();
+    final validHops =
+        _progress.hops.where((h) => !h.isTimeout && h.rttMs > 0).toList();
     if (validHops.isEmpty) return 0.0;
     return validHops.map((h) => h.rttMs).reduce((a, b) => a < b ? a : b);
   }
 
   double get maxRtt {
-    final validHops = _progress.hops.where((h) => !h.isTimeout && h.rttMs > 0).toList();
+    final validHops =
+        _progress.hops.where((h) => !h.isTimeout && h.rttMs > 0).toList();
     if (validHops.isEmpty) return 0.0;
     return validHops.map((h) => h.rttMs).reduce((a, b) => a > b ? a : b);
-  }
-
-  /// Validates a user-supplied trace target: IPv4, IPv6 (with or without
-  /// brackets) or a DNS hostname. Returns the normalized host, or null.
-  static String? normalizeTraceHost(String raw) {
-    var host = raw.trim().replaceAll(RegExp(r'^https?://'), '').split('/')[0].trim();
-    if (host.startsWith('[') && host.endsWith(']') && host.length > 2) {
-      host = host.substring(1, host.length - 1);
-    }
-    if (host.isEmpty || host.length > 253) return null;
-    // IPv4 (octet-checked, not just dotted digits).
-    if (RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host)) {
-      final ok = host.split('.').every((o) {
-        final n = int.tryParse(o);
-        return n != null && n >= 0 && n <= 255;
-      });
-      return ok ? host : null;
-    }
-    // IPv6 literal.
-    if (host.contains(':')) {
-      final addr = InternetAddress.tryParse(host);
-      return (addr != null && addr.type == InternetAddressType.IPv6) ? host : null;
-    }
-    // Hostname (labels up to 63 chars, no leading/trailing hyphens).
-    const label = r'[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?';
-    if (RegExp('^$label(?:\\.$label)*\$').hasMatch(host)) return host;
-    return null;
   }
 
   void start(String rawHost, {int maxHops = 30, int timeoutMs = 1500}) {
@@ -96,6 +85,7 @@ class TracerouteController extends ChangeNotifier {
     timeoutMs = timeoutMs.clamp(100, 10000);
 
     stop();
+    _nativeFallbackTried = false;
 
     _progress = TracerouteProgress(
       sessionId: 0,
@@ -110,11 +100,11 @@ class TracerouteController extends ChangeNotifier {
     );
     notifyListeners();
 
-    // Native ICMP tracing exists on Windows only: elsewhere the bindings
-    // are present but the worker can only emit timeouts (IPv4-only resolve
-    // + a stub prober), so the system `traceroute` binary is the honest
-    // path on Linux/macOS.
-    if (Platform.isWindows && _bindings.isTracerouteReady) {
+    // Native ICMP tracing on every desktop platform: Windows via
+    // Iphlpapi, Linux/macOS via unprivileged ping sockets (SOCK_DGRAM).
+    // Where the OS refuses ICMP, the native worker reports an error and
+    // the poll loop flips to the system `traceroute` binary.
+    if (_bindings.isTracerouteReady) {
       _startNativeTraceroute(host, maxHops, timeoutMs);
     } else {
       _startFallbackTraceroute(host, maxHops, timeoutMs);
@@ -141,7 +131,8 @@ class TracerouteController extends ChangeNotifier {
       if (jsonStr != null && jsonStr.isNotEmpty) {
         try {
           final Map<String, dynamic> map = jsonDecode(jsonStr);
-          final next = TracerouteProgress.fromJson(map);
+          final next = _withReverseNames(TracerouteProgress.fromJson(map));
+          _scheduleReverseLookups(next.hops);
 
           // Only rebuild UI when something actually changed. Rebuilding
           // on every poll causes layout churn on Windows desktop.
@@ -160,6 +151,21 @@ class TracerouteController extends ChangeNotifier {
             timer.cancel();
             _bindings.freeTraceroute(_activeSessionId);
             _activeSessionId = 0;
+            // Runtime ICMP refusal (ping_group_range / no CAP_NET_RAW,
+            // IcmpCreateFile denied): the run dies with an error and zero
+            // hops — retry once through the system traceroute instead of
+            // leaving an error-only screen.
+            if (!_nativeFallbackTried &&
+                _progress.error != null &&
+                _progress.hops.isEmpty) {
+              _nativeFallbackTried = true;
+              _progress = TracerouteProgress.initial(host).copyWith(
+                maxHops: maxHops,
+                isRunning: true,
+              );
+              notifyListeners();
+              unawaited(_startFallbackTraceroute(host, maxHops, timeoutMs));
+            }
           }
         } catch (e) {
           debugPrint('Traceroute poll parse error: $e');
@@ -168,7 +174,8 @@ class TracerouteController extends ChangeNotifier {
     });
   }
 
-  Future<void> _startFallbackTraceroute(String host, int maxHops, int timeoutMs) async {
+  Future<void> _startFallbackTraceroute(
+      String host, int maxHops, int timeoutMs) async {
     _isUsingNative = false;
     final int runId = ++_runId;
 
@@ -180,7 +187,11 @@ class TracerouteController extends ChangeNotifier {
       if (runId != _runId) return; // superseded while resolving
       if (addrs.isNotEmpty) {
         final v4 = addrs.where((a) => a.type == InternetAddressType.IPv4);
-        final target = (host.contains(':') ? addrs.first : v4.isNotEmpty ? v4.first : addrs.first);
+        final target = (host.contains(':')
+            ? addrs.first
+            : v4.isNotEmpty
+                ? v4.first
+                : addrs.first);
         _progress = _progress.copyWith(targetIp: target.address);
         notifyListeners();
       }
@@ -235,6 +246,7 @@ class TracerouteController extends ChangeNotifier {
             hops: List.from(collectedHops),
           );
           notifyListeners();
+          _scheduleReverseLookups(collectedHops);
         }
       },
       onError: (_) {
@@ -284,7 +296,8 @@ class TracerouteController extends ChangeNotifier {
     // Look for IP address: IPv4 first, then IPv6 literal.
     // (`-d`/`-n` keep output numeric, so tokens are clean addresses.)
     String ipStr = '*';
-    final ipv4Match = RegExp(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})').firstMatch(rest);
+    final ipv4Match =
+        RegExp(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})').firstMatch(rest);
     if (ipv4Match != null) {
       ipStr = ipv4Match.group(1)!;
     } else {
@@ -328,6 +341,69 @@ class TracerouteController extends ChangeNotifier {
       reachedDestination: isDest,
       status: isDest ? 'Destination Reached' : 'Time Exceeded in Transit',
     );
+  }
+
+  /// Overlays cached PTR names onto freshly polled hops (native progress has
+  /// `hostname: null`). Called on every poll so names survive snapshots.
+  TracerouteProgress _withReverseNames(TracerouteProgress progress) {
+    if (_reverseNames.isEmpty) return progress;
+    var changed = false;
+    final hops = progress.hops.map((hop) {
+      if (hop.hostname != null) return hop;
+      final name = _reverseNames[hop.ip];
+      if (name == null) return hop;
+      changed = true;
+      return hop.copyWith(hostname: name);
+    }).toList(growable: false);
+    return changed ? progress.copyWith(hops: hops) : progress;
+  }
+
+  void _scheduleReverseLookups(List<TracerouteHop> hops) {
+    final pending = <String>{};
+    for (final hop in hops) {
+      if (hop.isTimeout || hop.ip == '*' || hop.hostname != null) continue;
+      if (_reverseTried.contains(hop.ip)) continue;
+      pending.add(hop.ip);
+    }
+    if (pending.isEmpty || _reverseBusy) return;
+    _reverseBusy = true;
+    unawaited(_runReverseLookups(pending.toList()));
+  }
+
+  Future<void> _runReverseLookups(List<String> ips) async {
+    var next = 0;
+    Future<void> worker() async {
+      while (next < ips.length) {
+        final ip = ips[next++];
+        if (!_reverseTried.add(ip)) continue;
+        try {
+          final name = await InternetAddress(ip)
+              .reverse()
+              .timeout(const Duration(seconds: 2));
+          if (name.host.isNotEmpty) {
+            _reverseNames[ip] = name.host;
+          }
+        } catch (_) {
+          // No PTR record or resolver timeout: the IP remains the label.
+        }
+        if (_progress.hops.any((h) => h.ip == ip && h.hostname == null)) {
+          _progress = _withReverseNames(_progress);
+          notifyListeners();
+        }
+      }
+    }
+
+    try {
+      // Bounded concurrency: PTR lookups are fast when they exist, but a
+      // missing record can burn the full timeout; six in flight keeps names
+      // appearing without hammering the platform resolver.
+      final workers = ips.length < 6 ? ips.length : 6;
+      await Future.wait(List.generate(workers, (_) => worker()));
+    } finally {
+      _reverseBusy = false;
+      // Hops appended while the lookups ran were skipped; queue them now.
+      _scheduleReverseLookups(_progress.hops);
+    }
   }
 
   void stop() {

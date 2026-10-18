@@ -24,15 +24,38 @@ List<int> _response({
 
 void main() {
   group('buildDnsQuery', () {
-    test('structure: RD flag, one question, IN class', () {
+    test('structure: RD flag, one question, IN class, EDNS OPT', () {
       final built = buildDnsQuery('example.com', 1);
       final packet = built.$1;
       expect(packet[2], 0x01);
       expect(packet[3], 0x00);
       expect(packet[4], 0x00);
       expect(packet[5], 0x01);
-      // Tail is QTYPE/QCLASS.
-      expect(packet.sublist(packet.length - 4), [0x00, 0x01, 0x00, 0x01]);
+      expect(packet[10], 0x00);
+      expect(packet[11], 0x01); // ARCOUNT = 1 (OPT)
+      // QTYPE/QCLASS then the 11-byte OPT record (type 41, size 4096).
+      final qEnd = packet.length - 15;
+      expect(packet.sublist(qEnd, qEnd + 4), [0x00, 0x01, 0x00, 0x01]);
+      expect(packet.sublist(packet.length - 11),
+          [0x00, 0x00, 0x29, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    });
+
+    test('IDN and trailing-dot queries encode correctly', () {
+      final idn = buildDnsQuery('münchen.de', 1).$1;
+      // xn--mnchen-3ya label; no raw UTF-8 bytes anywhere past the
+      // 2 random txid bytes (which legitimately span 0..255).
+      expect(idn.sublist(2).any((b) => b > 127), isFalse);
+      final dotted = buildDnsQuery('example.com.', 1).$1;
+      final plain = buildDnsQuery('example.com', 1).$1;
+      // Same length prefix apart from txid: strip first 2 bytes to compare.
+      expect(dotted.sublist(2), plain.sublist(2));
+    });
+
+    test('txids vary (secure random)', () {
+      final ids = {
+        for (int i = 0; i < 16; i++) buildDnsQuery('example.com', 1).$2
+      };
+      expect(ids.length, greaterThan(1));
     });
 
     test('rejects bad names', () {

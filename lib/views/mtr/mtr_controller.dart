@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import '../../core/validation/host_validator.dart';
 import '../../models/ping_metric.dart';
 import '../../models/ping_target.dart';
 import '../../models/traceroute_hop.dart';
@@ -71,7 +72,7 @@ class MtrController extends ChangeNotifier {
   }
 
   void start(String rawHost) {
-    final host = TracerouteController.normalizeTraceHost(rawHost);
+    final host = normalizeTraceHost(rawHost);
     if (host == null) return;
     stop();
     _monitoring = false;

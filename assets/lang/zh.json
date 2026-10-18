@@ -59,6 +59,7 @@
   "hostRequired": "地址为必填项",
   "probeProtocol": "探测协议",
   "portTcp": "端口 (用于 TCP)",
+  "httpPath": "HTTP 路径",
   "intervalMs": "间隔 (毫秒)",
   "cancel": "取消",
   "addToMatrix": "添加到矩阵",
@@ -260,5 +261,18 @@
   "upToDate": "已是最新版本",
   "updateCheckFailed": "无法检查更新",
   "later": "稍后",
-  "autoUpdateCheck": "自动检查更新"
+  "autoUpdateCheck": "自动检查更新",
+  "secretsUnprotected": "系统保护失败 — 密钥以明文存储。请重启应用；如仍出现，请提交包含 Windows 版本的 bug。",
+  "mute": "静音告警",
+  "unmute": "取消静音",
+  "offlineAfterLabel": "连续失败几次算离线",
+  "recoverAfterLabel": "连续成功几次算恢复",
+  "groupLabel": "分组（可选）",
+  "groupHint": "例如：数据中心",
+  "tagsLabel": "标签（逗号分隔）",
+  "tagsHint": "例如：prod, dns",
+  "filterGroupAll": "所有分组",
+  "filterTagAll": "所有标签",
+  "editServer": "编辑服务器",
+  "save": "保存"
 }

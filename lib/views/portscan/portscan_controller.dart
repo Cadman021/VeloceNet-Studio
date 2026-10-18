@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../../core/validation/host_validator.dart';
 import '../../models/port_scan.dart';
-import '../traceroute/traceroute_controller.dart';
 
 /// TCP port sweeper (pure Dart, no native engine needed).
 ///
-/// Ports are probed in bounded-concurrency batches; cancellation is
-/// cooperative between batches (in-flight connects finish via their
-/// timeout). A timed-out connect is reported as `filtered`, a refused
-/// one as `closed` — the standard heuristic, documented in the UI.
+/// A fixed-size worker pool drains the port queue (no batch barriers: a slow
+/// port never idles the other workers). Each port is tried against every
+/// resolved address; it is `open` if any address accepts, `filtered` if all
+/// attempts time out, otherwise `closed`. Cancellation is cooperative: the
+/// in-flight connects finish via their timeout, then the workers stop.
 class PortscanController extends ChangeNotifier {
   static const int maxPorts = 4096;
 
@@ -37,7 +38,7 @@ class PortscanController extends ChangeNotifier {
     int timeoutMs = 1000,
     int concurrency = 64,
   }) async {
-    final host = TracerouteController.normalizeTraceHost(rawHost);
+    final host = normalizeTraceHost(rawHost);
     if (host == null) {
       _error = 'Invalid host. Use an IPv4/IPv6 address or hostname.';
       notifyListeners();
@@ -73,10 +74,17 @@ class PortscanController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (runId != _runId || addrs.isEmpty) return;
+    if (runId != _runId) return;
+    if (addrs.isEmpty) {
+      _error = 'DNS resolution failed.';
+      _isRunning = false;
+      _isCompleted = true;
+      notifyListeners();
+      return;
+    }
 
     _run(
-      addrs.first,
+      addrs,
       ports,
       timeoutMs.clamp(100, 5000),
       concurrency.clamp(1, 256),
@@ -85,26 +93,73 @@ class PortscanController extends ChangeNotifier {
   }
 
   Future<void> _run(
-    InternetAddress addr,
+    List<InternetAddress> addrs,
     List<int> ports,
     int timeoutMs,
     int concurrency,
     int runId,
   ) async {
-    for (int i = 0; i < ports.length; i += concurrency) {
-      if (runId != _runId) return; // stopped or superseded
-      final batch = ports.skip(i).take(concurrency);
-      final out = await Future.wait(
-        batch.map((p) => _probe(addr, p, timeoutMs)),
-      );
-      if (runId != _runId) return;
-      _results.addAll(out);
-      notifyListeners();
+    var next = 0;
+    var completed = 0;
+
+    Future<void> worker() async {
+      while (true) {
+        if (runId != _runId) return; // stopped or superseded
+        final index = next++;
+        if (index >= ports.length) return;
+        final result = await _probePort(addrs, ports[index], timeoutMs);
+        if (runId != _runId) return;
+        _results.add(result);
+        completed++;
+        // Throttle rebuilds: with thousands of ports, notifying per result
+        // would re-render the screen hundreds of times per second.
+        if (completed % 16 == 0 || completed == ports.length) {
+          notifyListeners();
+        }
+      }
     }
+
+    final workers = concurrency < ports.length ? concurrency : ports.length;
+    await Future.wait(List.generate(workers, (_) => worker()));
     if (runId != _runId) return;
+
+    // Completion order is nondeterministic; sort so the table and exports
+    // stay stable across runs.
+    _results.sort((a, b) => a.port.compareTo(b.port));
     _isRunning = false;
     _isCompleted = true;
     notifyListeners();
+  }
+
+  /// Probes one port on all resolved addresses concurrently (a dual-stack
+  /// name should report open if either family accepts). Timeouts are
+  /// concurrent, so one port costs at most one timeout period.
+  Future<PortScanResult> _probePort(
+    List<InternetAddress> addrs,
+    int port,
+    int timeoutMs,
+  ) async {
+    final attempts = await Future.wait(
+      addrs.map((addr) => _probe(addr, port, timeoutMs)),
+    );
+    for (final result in attempts) {
+      if (result.state == PortState.open) {
+        return PortScanResult(
+          port: port,
+          state: PortState.open,
+          service: serviceForPort(port),
+          rttMs: result.rttMs,
+        );
+      }
+    }
+    final sawTimeout =
+        attempts.any((result) => result.state == PortState.filtered);
+    return PortScanResult(
+      port: port,
+      state: sawTimeout ? PortState.filtered : PortState.closed,
+      service: serviceForPort(port),
+      rttMs: -1.0,
+    );
   }
 
   Future<PortScanResult> _probe(

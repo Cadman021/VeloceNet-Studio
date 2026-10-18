@@ -97,7 +97,7 @@ void main() {
       log.dispose();
     });
 
-    test('cooldown suppresses flapping repeats', () async {
+    test('cooldown is per event kind: recovery is never swallowed', () async {
       int calls = 0;
       final log = AlertLog();
       final dispatcher = WebhookDispatcher(
@@ -109,35 +109,101 @@ void main() {
         },
       );
       final t0 = DateTime.utc(2026, 9, 30, 12, 0);
+      // Down at :00 goes out…
       expect(
           await dispatcher.dispatch(
               _event(3, TargetStatus.online, TargetStatus.offline),
               now: t0),
           isTrue);
+      // …recovery at :01 is a different kind and must NOT be suppressed,
+      // or the user would think the host is still down.
       expect(
           await dispatcher.dispatch(
               _event(3, TargetStatus.offline, TargetStatus.online),
               now: t0.add(const Duration(minutes: 1))),
+          isTrue);
+      // …but the same kind within 5 minutes still is.
+      expect(
+          await dispatcher.dispatch(
+              _event(3, TargetStatus.online, TargetStatus.offline),
+              now: t0.add(const Duration(minutes: 2))),
           isFalse);
       expect(
           await dispatcher.dispatch(
               _event(3, TargetStatus.online, TargetStatus.offline),
               now: t0.add(const Duration(minutes: 6))),
           isTrue);
-      expect(calls, 4); // 2 channels x 2 accepted sends
+      expect(calls, 6); // 2 channels x 3 accepted sends
       dispatcher.dispose();
       log.dispose();
     });
 
+    test('failed sends queue up and retry with delay annotation', () async {
+      final sentBodies = <String>[];
+      int attempts = 0;
+      final log = AlertLog();
+      final dispatcher = WebhookDispatcher(
+        log: log,
+        configOf: () => config,
+        poster: (_, __, body) async {
+          attempts++;
+          if (attempts < 3) return false; // outage for the first two tries
+          sentBodies.add(body);
+          return true;
+        },
+      );
+      final t0 = DateTime.utc(2026, 9, 30, 12, 0);
+      // Both channels fail twice: nothing delivered, two outbox entries.
+      expect(
+          await dispatcher.dispatch(
+              _event(5, TargetStatus.online, TargetStatus.offline),
+              now: t0),
+          isFalse);
+      // Too early: backoff not elapsed.
+      await dispatcher.flushOutbox(now: t0.add(const Duration(seconds: 30)));
+      expect(sentBodies, isEmpty);
+      // First retry due at +1m, still failing; second at +3m succeeds with
+      // the delay annotation (both channels share the entry path here,
+      // so both bodies carry it).
+      await dispatcher.flushOutbox(now: t0.add(const Duration(minutes: 2)));
+      expect(sentBodies, hasLength(2));
+      expect(sentBodies.first, contains('delayed'));
+      dispatcher.dispose();
+      log.dispose();
+    });
+
+    test('discord webhook URL must be discord-owned https', () {
+      const good = WebhookConfig(
+        discordEnabled: true,
+        discordUrl: 'https://discord.com/api/webhooks/123/abc',
+      );
+      expect(good.canDiscord, isTrue);
+      const ptb = WebhookConfig(
+        discordEnabled: true,
+        discordUrl: 'https://ptb.discord.com/api/webhooks/123/abc',
+      );
+      expect(ptb.canDiscord, isTrue);
+      for (final bad in [
+        'https://evil.com/api/webhooks/123/abc',
+        'https://discord.com.evil.com/api/webhooks/123',
+        'http://discord.com/api/webhooks/123/abc',
+        'not a url',
+        '',
+      ]) {
+        expect(
+          WebhookConfig(discordEnabled: true, discordUrl: bad).canDiscord,
+          isFalse,
+          reason: bad,
+        );
+      }
+    });
+
     test('proxy directive parsing', () {
-      expect(
-          buildProxyDirective(enabled: false, address: '127.0.0.1:8080'),
+      expect(buildProxyDirective(enabled: false, address: '127.0.0.1:8080'),
           isNull);
-      expect(
-          buildProxyDirective(enabled: true, address: '127.0.0.1:8080'),
+      expect(buildProxyDirective(enabled: true, address: '127.0.0.1:8080'),
           'PROXY 127.0.0.1:8080');
-      expect(buildProxyDirective(enabled: true, address: 'no-port'),
-          isNull);
+      expect(buildProxyDirective(enabled: true, address: 'no-port'), isNull);
       expect(buildProxyDirective(enabled: true, address: 'h:99999'), isNull);
       expect(buildProxyDirective(enabled: true, address: ''), isNull);
     });
@@ -154,8 +220,8 @@ void main() {
         },
       );
       expect(
-          await dispatcher.dispatch(
-              _event(1, TargetStatus.online, TargetStatus.offline)),
+          await dispatcher
+              .dispatch(_event(1, TargetStatus.online, TargetStatus.offline)),
           isFalse);
       expect(calls, 0);
       dispatcher.dispose();

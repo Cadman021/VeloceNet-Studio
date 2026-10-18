@@ -59,6 +59,7 @@
   "hostRequired": "Address is required",
   "probeProtocol": "Probe protocol",
   "portTcp": "Port (for TCP)",
+  "httpPath": "HTTP path",
   "intervalMs": "Interval (ms)",
   "cancel": "Cancel",
   "addToMatrix": "Add to matrix",
@@ -260,5 +261,18 @@
   "upToDate": "You're up to date",
   "updateCheckFailed": "Couldn't check for updates",
   "later": "Later",
-  "autoUpdateCheck": "Automatic update checks"
+  "autoUpdateCheck": "Automatic update checks",
+  "secretsUnprotected": "OS protection failed — secrets are stored as plaintext. Restart the app; if it persists, file a bug with your Windows version.",
+  "mute": "Mute alerts",
+  "unmute": "Unmute alerts",
+  "offlineAfterLabel": "Offline after (consecutive failures)",
+  "recoverAfterLabel": "Recover after (consecutive successes)",
+  "groupLabel": "Group (optional)",
+  "groupHint": "e.g. Datacenter",
+  "tagsLabel": "Tags (comma separated)",
+  "tagsHint": "e.g. prod, dns",
+  "filterGroupAll": "All groups",
+  "filterTagAll": "All tags",
+  "editServer": "Edit server",
+  "save": "Save"
 }

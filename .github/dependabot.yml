@@ -1,0 +1,16 @@
+# Weekly dependency updates: pub packages, Cargo crates and GitHub Actions.
+# Security advisories for Rust/Dart surface as Dependabot alerts + PRs.
+version: 2
+updates:
+  - package-ecosystem: "pub"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "cargo"
+    directory: "/native_engine"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

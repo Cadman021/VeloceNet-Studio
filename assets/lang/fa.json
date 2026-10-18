@@ -59,6 +59,7 @@
   "hostRequired": "آدرس الزامی است",
   "probeProtocol": "پروتکل پروب",
   "portTcp": "پورت (برای TCP)",
+  "httpPath": "مسیر HTTP",
   "intervalMs": "بازه (میلی‌ثانیه)",
   "cancel": "انصراف",
   "addToMatrix": "افزودن به ماتریس",
@@ -260,5 +261,18 @@
   "upToDate": "شما به‌روز هستید",
   "updateCheckFailed": "بررسی به‌روزرسانی ناموفق بود",
   "later": "بعداً",
-  "autoUpdateCheck": "بررسی خودکار به‌روزرسانی"
+  "autoUpdateCheck": "بررسی خودکار به‌روزرسانی",
+  "secretsUnprotected": "محافظت سیستم‌عامل شکست خورد — کلیدها به‌صورت متن ساده ذخیره شده‌اند. برنامه را ری‌استارت کنید؛ اگر ادامه داشت، با ذکر نسخه ویندوز باگ ثبت کنید.",
+  "mute": "بی‌صدا کردن هشدارها",
+  "unmute": "فعال کردن هشدارها",
+  "offlineAfterLabel": "آفلاین بعد از (خطای متوالی)",
+  "recoverAfterLabel": "ریکاوری بعد از (موفقیت متوالی)",
+  "groupLabel": "گروه (اختیاری)",
+  "groupHint": "مثلاً دیتاسنتر",
+  "tagsLabel": "برچسب‌ها (با کاما جدا کنید)",
+  "tagsHint": "مثلاً prod، dns",
+  "filterGroupAll": "همه گروه‌ها",
+  "filterTagAll": "همه برچسب‌ها",
+  "editServer": "ویرایش سرور",
+  "save": "ذخیره"
 }

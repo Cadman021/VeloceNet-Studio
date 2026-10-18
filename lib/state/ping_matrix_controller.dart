@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/ping_metric.dart';
 import '../models/ping_target.dart';
 import '../services/network_engine_service.dart';
 import '../services/preset_targets.dart';
+import '../services/target_config_io.dart';
 import '../services/uptime_history.dart';
 import 'alert_log.dart';
 
@@ -24,17 +26,14 @@ class PingMatrixController extends ChangeNotifier {
 
   int get totalTargets => _targets.length;
 
-  int get onlineCount => _metrics.values
-      .where((m) => m.status == TargetStatus.online)
-      .length;
+  int get onlineCount =>
+      _metrics.values.where((m) => m.status == TargetStatus.online).length;
 
-  int get degradedCount => _metrics.values
-      .where((m) => m.status == TargetStatus.degraded)
-      .length;
+  int get degradedCount =>
+      _metrics.values.where((m) => m.status == TargetStatus.degraded).length;
 
-  int get offlineCount => _metrics.values
-      .where((m) => m.status == TargetStatus.offline)
-      .length;
+  int get offlineCount =>
+      _metrics.values.where((m) => m.status == TargetStatus.offline).length;
 
   double get averageLatency {
     final active = _metrics.values.where((m) => m.lastRttMs > 0).toList();
@@ -61,8 +60,21 @@ class PingMatrixController extends ChangeNotifier {
     return (totalLost / totalSent) * 100.0;
   }
 
-  void init() {
-    _targets = PresetTargets.getDefaultTargets();
+  static const _kPersistedTargets = 'targets.v1';
+
+  /// Loads persisted user targets (falling back to presets on first run
+  /// or corrupt data), then wires the engine. Async: prefs read + notify
+  /// once targets are known so the grid never shows stale defaults first.
+  Future<void> init() async {
+    List<PingTarget>? restored;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kPersistedTargets);
+      if (raw != null) restored = decodePersistedTargets(raw);
+    } catch (_) {}
+    // Growable copy: presets come back as a const (unmodifiable) list and
+    // add/remove would throw on it — this crashed "Add server" outright.
+    _targets = List.of(restored ?? PresetTargets.getDefaultTargets());
     _service.initialize(_targets);
     // Best-effort history; frames before init completes are skipped.
     unawaited(historyService.init());
@@ -71,11 +83,12 @@ class PingMatrixController extends ChangeNotifier {
       for (final m in list) {
         final prev = _metrics[m.id];
         if (prev != null && prev.status != m.status) {
-          final target = _targets.where((t) => t.id == m.id);
+          final matches = _targets.where((t) => t.id == m.id);
+          final target = matches.isEmpty ? null : matches.first;
+          if (target == null || target.muted) continue;
           alertLog.noteTransition(
             targetId: m.id,
-            targetName:
-                target.isEmpty ? m.name : target.first.name,
+            targetName: target.name,
             from: prev.status,
             to: m.status,
             rttMs: m.lastRttMs,
@@ -117,6 +130,7 @@ class PingMatrixController extends ChangeNotifier {
   void addTarget(PingTarget target) {
     _targets.add(target);
     _service.addTarget(target);
+    _persistTargets();
     notifyListeners();
   }
 
@@ -124,7 +138,53 @@ class PingMatrixController extends ChangeNotifier {
     _targets.removeWhere((t) => t.id == id);
     _metrics.remove(id);
     _service.removeTarget(id);
+    _persistTargets();
     notifyListeners();
+  }
+
+  /// Flips the maintenance mute: muted targets keep probing (metrics stay
+  /// live) but emit no alert events and no webhooks.
+  void toggleMute(int id) {
+    final i = _targets.indexWhere((t) => t.id == id);
+    if (i == -1) return;
+    _targets[i] = _targets[i].copyWith(muted: !_targets[i].muted);
+    _persistTargets();
+    notifyListeners();
+  }
+
+  /// Replaces an existing target in place (edit flow) — id and metrics
+  /// continuity are preserved. Unknown ids are ignored.
+  void updateTarget(PingTarget target) {
+    final i = _targets.indexWhere((t) => t.id == target.id);
+    if (i == -1) return;
+    _targets[i] = target;
+    // Service.addTarget removes the same-id entry before adding, so the
+    // live prober picks up the edited fields on the next frame.
+    _service.addTarget(target);
+    _persistTargets();
+    notifyListeners();
+  }
+
+  /// Applies alert thresholds to the prober (native engine + fallback).
+  void configureAlerts({required int offlineAfter, required int recoverAfter}) {
+    _service.configureAlerts(
+      offlineAfter: offlineAfter,
+      recoverAfter: recoverAfter,
+    );
+  }
+
+  /// Best-effort persistence after every user mutation (add/remove/import).
+  /// Mutations are user-driven (rare), so no debounce is needed; failures
+  /// only log.
+  void _persistTargets() {
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_kPersistedTargets, exportTargetsJson(_targets));
+      } catch (e) {
+        debugPrint('Target persistence failed: $e');
+      }
+    }());
   }
 
   /// Adds imported drafts, reassigning collision-free ids above the current
@@ -138,6 +198,7 @@ class PingMatrixController extends ChangeNotifier {
       _targets.add(target);
       _service.addTarget(target);
     }
+    _persistTargets();
     notifyListeners();
     return drafts.length;
   }

@@ -9,6 +9,47 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Nothing yet — see `main` for work toward the next release.
 
+## [1.5.0] — 2026-10-18
+
+### Added
+- Genuine WireGuard handshake construction (boringtun): the Warp UDP path builds real 148-byte Noise_IK initiations; only validated 92-byte responses count. Loopback-tested deterministically, plus live `#[ignore]` checks. Status: UNVALIDATED against real servers — live probes stay silent, which is ambiguous (unregistered identity vs. wrong peer key vs. reserved-bits policy). UDP verdicts therefore still come via TCP fallback; a known-good profile validation plus identity import (user-supplied `.conf`/wgcf profile) are the follow-ups. New `boringtun` + `rand_core` engine dependencies.
+- DNS health: hand-rolled RFC 3492 punycode (IDN domains encode correctly, verified against Python's idna oracle), trailing-dot FQDN tolerance, `Random.secure()` txids, and EDNS(0) OPT (4096-byte buffers, fewer truncations). Host validator accepts trailing dots too.
+- Native TCP probes resolve once per target (cached ~5 min) and try all resolved addresses in order instead of only the first (broken-IPv6-first no longer condemns dual-stack targets).
+- Configurable alert thresholds (offline after N consecutive failures, recovery after M consecutive successes, 1–20) in Settings, applied live to the native engine and the Dart fallback; recovery hysteresis shows a recovering target as Degraded instead of flapping Online.
+- Per-target alert mute (maintenance primitive): muted targets keep probing with live metrics but emit no alert events or webhooks; toggle in the card menu with a bell-off indicator.
+- Honest Warp rows: TCP-indicated endpoints render amber with a `TCP` badge, tooltip and footnote — never identical to confirmed UDP replies (the probe is heuristic, not a real WireGuard handshake).
+- Uptime history recovers orphaned `.tmp` day files on init and splits outage spans across data gaps (closed-app hours no longer merge into mega-outages).
+- CI now runs `cargo fmt --check`, Flutter tests on Ubuntu, and tests inside every release job; release artifacts ship with SHA256 checksums; Dependabot covers pub/Cargo/Actions.
+- Single-version policy (`tool/check_versions.ps1`, enforced in CI): pubspec, `AppInfo` and the engine crate all carry the app version.
+- Warp polling is incremental (counters + only new results per tick instead of re-serializing up to 4096 rows).
+- Host validation lives in `core/validation/` (moved out of the traceroute controller) with Discord webhook domain checks.
+- Target persistence: user-added/removed/imported servers now survive restarts (auto-saved JSON in prefs, validated on load with preset fallback). Also fixed a latent crash — presets load as an unmodifiable list, so Add/Remove threw on it.
+- Target groups and tags: each target carries an optional group and up to 8 tags (edit dialog reuses the add flow); cards render a group badge plus tag chips, and the Ping Matrix header gains a group dropdown and tap-to-filter tag chips whose facets come from live targets. Search matches group/tag text; sanitized on every import path (list, comma string, legacy singular `tag`).
+- Unprivileged ICMP on Linux/macOS: ping matrix and native traceroute probe through kernel "ping" sockets (`SOCK_DGRAM`, `IPPROTO_ICMP` — no root/CAP_NET_RAW; TTL-expired replies arrive via the Linux error queue `IP_RECVERR`/`MSG_ERRQUEUE` or macOS datagrams). `ProbeResult` now separates "ICMP unavailable" from a genuine failure, so the TCP fallback fires only where the OS refuses ping sockets instead of masking every miss; traceroute prefers the native engine on all platforms and drops to the system binary only when ICMP is refused at runtime.
+- HTTP/HTTPS probes in the Ping Matrix: a new `ProbeProtocol::Http`/`Https` pair (protocol ids 2/3) sends a real `GET <path> HTTP/1.1` and reports TTFB as the latency (connect + TLS handshake + server think-time), the HTTP status code and, for TLS, days until the certificate expires. Success is status < 400; 4xx/5xx still display their code in red. TLS uses rustls with a capturing verifier that accepts any certificate (expired/self-signed endpoints keep being measured) and extracts `notAfter` via a small DER walker; the cert-days value is sticky between samples while the status is per-sample. New "HTTP path" field in the target dialog (defaults to `/`), protocol-aware port defaults, and HTTP/TLS badges on cards (TLS turns amber ≤14 days and red ≤3). The Dart fallback prober mirrors the same behavior via `Socket`/`SecureSocket`.
+- Windows IPv6 ICMP: `Icmp6SendEcho2` is used when a target resolves to AAAA only (previously reported "No IPv4 address resolved"); bare IPv6 literals are bracketed during resolution. ICMPv6 handle failures degrade like unprivileged-ICMP refusals, so a port-carrying target still falls back to TCP.
+- Traceroute resolves PTR names in the Dart layer (bounded concurrency, 2s timeout, per-IP cache, overlaid on every poll) and shows them under each hop's address; a router's Destination Unreachable now terminates the trace instead of wasting probes up to `max_hops`.
+- Port scanner uses a worker pool instead of batch barriers, tries every resolved address per port (dual-stack), and sorts results before completion so runs are deterministic.
+
+### Changed
+- The four largest screens (Warp, DNS Lookup, Port Scanner, Settings) are split into focused widget files: headers, config cards, results tables and reusable fields now live in `widgets/` subfolders, and each screen owns only its mutable state (89–153 lines each, down from 600).
+- Engine handles crossing the FFI boundary are opaque numeric ids (process-wide table) instead of raw `*mut Engine` pointers: a stale/double free from Dart is now a no-op, never use-after-free. Dart keeps `int` handles (0 = invalid).
+- Uptime history is append-only JSONL per day (`YYYY-MM-DD.jsonl`, one line per finalized minute) instead of rewriting the whole day map on every rollover; legacy `.json` map files are still read. Day files and the 24h dialog now follow LOCAL midnight instead of UTC.
+
+### Fixed
+- DPAPI failures are surfaced: a new `secretsUnprotected` warning in Settings when a secret lands as plaintext; stale `flutter_secure_storage` references removed; DPAPI FFI uses correct 32-bit `Int32` returns.
+- Settings secret fields save debounced (600ms batch) instead of three DPAPI+prefs writes per keystroke; the test-send path flushes pending edits first.
+- Bandwidth totals no longer 2–3× from virtual/filter adapters: only hardware interfaces (NDIS flag) count toward totals (all adapters still listed); `stop()` joins within ~100ms instead of blocking up to 5s on the UI thread.
+- Process list counts ESTABLISHED TCP connections only (idle LISTEN/TIME_WAIT sockets no longer outrank real traffic) and resolves exe names as UTF-16 (non-ASCII names were mangled via ANSI).
+- Removed the unused direct `rand` engine dependency (supply chain); `socket2` is now Unix-only, scoped to unprivileged ICMP sockets.
+- Traceroute/warp session managers cap concurrent sessions (8/4) with prune-then-refuse, so forgotten `free()` calls can no longer leak threads unboundedly.
+- Rust tests use local `TcpListener` fixtures with real asserts instead of a live 8.8.8.8 probe with none.
+- Engine teardown no longer blocks the UI thread: `Engine::drop` uses `shutdown_background()` instead of joining in-flight blocking probes (up to ~10s DNS/ICMP waits).
+- Metrics stream filters snapshots to live target ids (a target removed mid-decode can no longer resurrect) and clears instead of keeping a stale frame when all targets are gone.
+- Dart fallback honors per-target `intervalMs` and judges degraded status on windowed (not lifetime) loss, matching the native engine.
+- Uptime history records counter deltas between frames (not one sample per UI tick): slow targets are no longer over-counted, fast ones no longer drop samples, and pre-probe pending frames no longer count as losses.
+- Webhook cooldown is per (target, event kind), so a recovery is never swallowed by a recent down-alert; failed sends queue in a persistent-retry outbox (1–15 min backoff, 24 h cap) with a "delayed, connectivity was down" annotation.
+
 ## [1.4.0] — 2026-10-10
 
 ### Added
@@ -116,7 +157,8 @@ First public release.
 - Native metrics polling interval 200 ms → 500 ms (less UI-thread JSON pressure); `print` → `debugPrint` in the engine service.
 - Rank medals (🥇🥈🥉) replaced with text ranks (`#1`, `#2`, …) for font/i18n safety.
 
-[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.2.0
