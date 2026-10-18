@@ -22,7 +22,7 @@ dependencies:
   intl: ^0.20.2
   path_provider: ^2.1.6
   shared_preferences: ^2.5.6
-  url_launcher: ^6.3.2
+  url_launcher: ^6.3.3
   # NOTE: flutter_secure_storage was dropped: its Windows backend needs
   # ATL headers (atlstr.h) absent from default VS installs, breaking
   # `flutter run`. Secrets use DPAPI-via-FFI instead (see secret_store.dart).
