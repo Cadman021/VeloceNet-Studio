@@ -433,7 +433,7 @@ impl TracerouteManager {
         let handle: windows_sys::Win32::Foundation::HANDLE =
             unsafe { windows_sys::Win32::NetworkManagement::IpHelper::IcmpCreateFile() };
         #[cfg(windows)]
-        if handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE || handle == 0 {
+        if handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE || handle.is_null() {
             let mut p = progress.write();
             p.is_running = false;
             p.is_completed = true;
