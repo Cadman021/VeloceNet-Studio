@@ -274,5 +274,11 @@
   "filterGroupAll": "All groups",
   "filterTagAll": "All tags",
   "editServer": "Edit server",
-  "save": "Save"
+  "save": "Save",
+  "routeChanged": "Route changed",
+  "routeChangedTooltip": "The path to this target changed since the last trace",
+  "routeUnchanged": "Route stable",
+  "routeChangeSummary": "{changed} changed · {added} new · {removed} lost",
+  "routeAck": "Dismiss",
+  "retraceNow": "Re-trace now"
 }

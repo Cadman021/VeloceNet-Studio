@@ -102,12 +102,11 @@ class _MtrScreenState extends State<MtrScreen> {
                 ],
               ),
           const Spacer(),
-          // Re-trace: route changes mid-run would otherwise leave stale
-          // hops monitored forever. Restarts discovery (and rebuilds hop
-          // targets) while keeping the same host.
+          // Re-trace: re-discovers the path on the same host so route
+          // changes are diffed against the previous baseline and stale
+          // hops are repointed. Also runs automatically every minute.
           IconButton(
-            onPressed:
-                isRunning ? () => c.start(_hostController.text) : null,
+            onPressed: isRunning ? c.retrace : null,
             icon: const Icon(Icons.refresh_rounded, size: 20),
             tooltip: strings.get('retrace'),
             color: context.textSecondaryColor,
@@ -180,6 +179,62 @@ class _MtrScreenState extends State<MtrScreen> {
               const SizedBox(width: 12),
               _phaseChip(context, strings, c),
             ],
+          ),
+          if (c.hasRouteChanges) ...[
+            const SizedBox(height: 12),
+            _routeChangeBanner(context, strings, c),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Amber banner shown when the latest re-trace found a different path:
+  /// hop-level deltas plus a dismiss action. Stays out of the way entirely
+  /// when the route is stable.
+  Widget _routeChangeBanner(
+      BuildContext context, AppStrings strings, MtrController c) {
+    final diff = c.routeDiff;
+    final summary = strings
+        .get('routeChangeSummary')
+        .replaceAll('{changed}', '${diff.changedCount}')
+        .replaceAll('{added}', '${diff.addedCount}')
+        .replaceAll('{removed}', '${diff.removedCount}');
+    const amber = AppColors.latencyModerate;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: amber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: amber.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.alt_route_rounded, size: 16, color: amber),
+          const SizedBox(width: 8),
+          Text(
+            strings.get('routeChanged'),
+            style: const TextStyle(
+                color: amber, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              summary,
+              style: TextStyle(
+                  color: context.textSecondaryColor, fontSize: 11),
+            ),
+          ),
+          TextButton(
+            onPressed: c.acknowledgeRouteChanges,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 30),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+            ),
+            child: Text(
+              strings.get('routeAck'),
+              style: const TextStyle(fontSize: 11, color: amber),
+            ),
           ),
         ],
       ),

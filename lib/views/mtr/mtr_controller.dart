@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/validation/host_validator.dart';
 import '../../models/ping_metric.dart';
 import '../../models/ping_target.dart';
+import '../../models/route_change.dart';
 import '../../models/traceroute_hop.dart';
 import '../../services/network_engine_service.dart';
 import '../traceroute/traceroute_controller.dart';
@@ -32,10 +33,26 @@ class MtrController extends ChangeNotifier {
   bool _monitoring = false;
   bool _discovering = false;
 
+  // Route-change tracking. The last completed path snapshot is kept so a
+  // periodic re-trace can be diffed against it; [_diff] is the latest
+  // comparison and drives the "route changed" badge in the UI.
+  List<TracerouteHop>? _lastRoute;
+  RouteDiff _diff = RouteDiff.empty;
+  Timer? _retraceTimer;
+  String? _host;
+
+  /// Seconds between automatic re-traces while monitoring. Route changes
+  /// are rare; a minute keeps the cost negligible on a 30-hop path.
+  static const int retraceIntervalSec = 60;
+
   bool get isRunning => _discovering || _monitoring;
   bool get isDiscovering => _discovering;
   bool get isMonitoring => _monitoring;
   List<TracerouteHop> get hops => tracer.hops;
+
+  /// Latest route comparison (empty until a second trace completes).
+  RouteDiff get routeDiff => _diff;
+  bool get hasRouteChanges => _diff.hasChanges;
 
   MtrController() {
     tracer.addListener(_onTraceUpdate);
@@ -77,7 +94,23 @@ class MtrController extends ChangeNotifier {
     stop();
     _monitoring = false;
     _discovering = true;
+    _host = host;
     hopMetrics.clear();
+    // A fresh start is a new baseline: the old path, if any, is not the
+    // thing we should diff against.
+    _lastRoute = null;
+    _diff = RouteDiff.empty;
+    notifyListeners();
+    tracer.start(host);
+  }
+
+  /// Re-traces the current host without stopping monitoring. Used by the
+  /// periodic timer and the manual re-trace button to detect path changes.
+  void retrace() {
+    final host = _host;
+    if (host == null || host.isEmpty) return;
+    if (_discovering) return; // already mid-discovery
+    _discovering = true;
     notifyListeners();
     tracer.start(host);
   }
@@ -92,20 +125,49 @@ class MtrController extends ChangeNotifier {
       return;
     }
     _discovering = false;
+
+    // Diff against the previous completed path (if any) before adopting
+    // this one as the new baseline.
+    if (_lastRoute != null) {
+      _diff = RouteDiff.between(_lastRoute!, progress.hops);
+    }
+    final bool wasMonitoring = _monitoring;
+    _lastRoute = List.of(progress.hops);
+
     final targets = buildHopTargets(progress.hops);
     if (targets.isEmpty) {
       notifyListeners();
       return;
     }
+    // Rebuild the hop targets: hop IPs can change when the route does, so
+    // a re-trace must repoint every monitor id at the new address.
     _ping.initialize(targets);
     _ping.start();
     _monitoring = true;
+    if (!wasMonitoring) _startRetraceTimer();
+    notifyListeners();
+  }
+
+  void _startRetraceTimer() {
+    _retraceTimer?.cancel();
+    _retraceTimer = Timer.periodic(
+      const Duration(seconds: retraceIntervalSec),
+      (_) => retrace(),
+    );
+  }
+
+  /// Clears the change badge without discarding the tracked baseline, so
+  /// later re-traces still compare against the last known-good path.
+  void acknowledgeRouteChanges() {
+    _diff = RouteDiff.empty;
     notifyListeners();
   }
 
   void stop() {
     _discovering = false;
     _monitoring = false;
+    _retraceTimer?.cancel();
+    _retraceTimer = null;
     tracer.stop();
     _ping.stop();
     notifyListeners();
@@ -114,12 +176,16 @@ class MtrController extends ChangeNotifier {
   void clear() {
     stop();
     hopMetrics.clear();
+    _lastRoute = null;
+    _diff = RouteDiff.empty;
     tracer.reset();
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _retraceTimer?.cancel();
+    _retraceTimer = null;
     tracer.removeListener(_onTraceUpdate);
     tracer.dispose();
     _metricsSub?.cancel();

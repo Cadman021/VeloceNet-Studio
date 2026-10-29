@@ -274,5 +274,11 @@
   "filterGroupAll": "همه گروه‌ها",
   "filterTagAll": "همه برچسب‌ها",
   "editServer": "ویرایش سرور",
-  "save": "ذخیره"
+  "save": "ذخیره",
+  "routeChanged": "مسیر تغییر کرد",
+  "routeChangedTooltip": "مسیر رسیدن به این مقصد از آخرین trace تغییر کرده است",
+  "routeUnchanged": "مسیر پایدار",
+  "routeChangeSummary": "{changed} تغییر · {added} جدید · {removed} حذف",
+  "routeAck": "بستن",
+  "retraceNow": "trace مجدد"
 }

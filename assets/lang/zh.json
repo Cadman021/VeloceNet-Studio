@@ -274,5 +274,11 @@
   "filterGroupAll": "所有分组",
   "filterTagAll": "所有标签",
   "editServer": "编辑服务器",
-  "save": "保存"
+  "save": "保存",
+  "routeChanged": "路由已改变",
+  "routeChangedTooltip": "自上次追踪以来到目标的路径已改变",
+  "routeUnchanged": "路由稳定",
+  "routeChangeSummary": "{changed} 变更 · {added} 新增 · {removed} 丢失",
+  "routeAck": "忽略",
+  "retraceNow": "重新追踪"
 }

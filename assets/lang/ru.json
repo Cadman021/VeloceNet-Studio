@@ -274,5 +274,11 @@
   "filterGroupAll": "Все группы",
   "filterTagAll": "Все теги",
   "editServer": "Изменить сервер",
-  "save": "Сохранить"
+  "save": "Сохранить",
+  "routeChanged": "Маршрут изменился",
+  "routeChangedTooltip": "Путь до цели изменился с момента последней трассировки",
+  "routeUnchanged": "Маршрут стабилен",
+  "routeChangeSummary": "{changed} изм. · {added} новых · {removed} потеряно",
+  "routeAck": "Скрыть",
+  "retraceNow": "Повторить трассировку"
 }
