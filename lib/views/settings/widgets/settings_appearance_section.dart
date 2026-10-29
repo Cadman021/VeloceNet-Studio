@@ -42,6 +42,17 @@ class SettingsAppearanceSection extends StatelessWidget {
             value: settings.trayEnabled,
             onChanged: (v) => settings.setTrayEnabled(v),
           ),
+          if (settings.autostartSupported)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.get('launchAtLogin')),
+              subtitle: Text(
+                strings.get('launchAtLoginSub'),
+                style: const TextStyle(fontSize: 11),
+              ),
+              value: settings.autostartEnabled,
+              onChanged: (v) => settings.setAutostartEnabled(v),
+            ),
         ],
       ),
     );

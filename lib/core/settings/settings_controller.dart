@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../services/autostart_service.dart';
 import '../../services/update_checker.dart';
 import '../../services/webhook_dispatcher.dart' show buildProxyDirective;
 import '../app_info.dart';
@@ -13,8 +14,9 @@ class SettingsController extends ChangeNotifier {
   /// Backing store for webhook secrets (DPAPI on Windows, documented
   /// plaintext passthrough elsewhere). Injectable for unit tests.
   final SecretStore _secrets;
-  SettingsController({SecretStore? secrets})
-      : _secrets = secrets ?? PlatformSecretStore();
+  SettingsController({SecretStore? secrets, AutostartService? autostart})
+      : _secrets = secrets ?? PlatformSecretStore(),
+        _autostart = autostart ?? AutostartService();
 
   static const _kTheme = 'settings.themeMode';
   static const _kLocale = 'settings.locale';
@@ -27,6 +29,7 @@ class SettingsController extends ChangeNotifier {
   static const _kProxyEnabled = 'settings.proxyEnabled';
   static const _kProxy = 'settings.proxy';
   static const _kTray = 'settings.tray';
+  static const _kAutostart = 'settings.autostart';
   static const _kAlertOfflineAfter = 'settings.alertOfflineAfter';
   static const _kAlertRecoverAfter = 'settings.alertRecoverAfter';
   static const _kUpdateAuto = 'settings.updateAuto';
@@ -62,6 +65,15 @@ class SettingsController extends ChangeNotifier {
   // Minimize to the system tray on window close instead of quitting.
   // Monitoring keeps running in the background; Quit lives in the tray menu.
   bool trayEnabled = true;
+
+  // Launch at login. The OS entry is the source of truth at load time;
+  // the persisted flag only records the user's intent so a transient
+  // registry/FS failure doesn't silently flip the toggle.
+  final AutostartService _autostart;
+  bool autostartEnabled = false;
+
+  /// Whether launch-at-login can be configured here (Windows/Linux only).
+  bool get autostartSupported => AutostartService.isSupported;
 
   // Alert trip points, mirrored to the prober (native engine + fallback):
   // offline after N consecutive failures, recovery after M consecutive
@@ -137,6 +149,8 @@ class SettingsController extends ChangeNotifier {
       proxyEnabled = prefs.getBool(_kProxyEnabled) ?? false;
       proxyAddress = prefs.getString(_kProxy) ?? '';
       trayEnabled = prefs.getBool(_kTray) ?? true;
+      autostartEnabled = (prefs.getBool(_kAutostart) ?? false) &&
+          await _autostart.isEnabled();
       alertOfflineAfter = (prefs.getInt(_kAlertOfflineAfter) ?? 3).clamp(1, 20);
       alertRecoverAfter = (prefs.getInt(_kAlertRecoverAfter) ?? 2).clamp(1, 20);
       updateCheckEnabled = prefs.getBool(_kUpdateAuto) ?? true;
@@ -265,6 +279,23 @@ class SettingsController extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kTray, trayEnabled);
+    } catch (_) {}
+  }
+
+  /// Enables/disables launch-at-login. Only updates the in-memory flag when
+  /// the OS entry actually changed, so the toggle never claims a state the
+  /// system didn't accept (locked registry, read-only home).
+  Future<void> setAutostartEnabled(bool value) async {
+    final ok = await _autostart.setEnabled(value);
+    if (!ok) {
+      notifyListeners(); // re-render so the switch snaps back
+      return;
+    }
+    autostartEnabled = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kAutostart, autostartEnabled);
     } catch (_) {}
   }
 

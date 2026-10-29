@@ -280,5 +280,7 @@
   "routeUnchanged": "Маршрут стабилен",
   "routeChangeSummary": "{changed} изм. · {added} новых · {removed} потеряно",
   "routeAck": "Скрыть",
-  "retraceNow": "Повторить трассировку"
+  "retraceNow": "Повторить трассировку",
+  "launchAtLogin": "Запускать при входе",
+  "launchAtLoginSub": "Автоматически запускать VeloceNet-Studio при входе в систему"
 }

@@ -280,5 +280,7 @@
   "routeUnchanged": "Route stable",
   "routeChangeSummary": "{changed} changed · {added} new · {removed} lost",
   "routeAck": "Dismiss",
-  "retraceNow": "Re-trace now"
+  "retraceNow": "Re-trace now",
+  "launchAtLogin": "Launch at login",
+  "launchAtLoginSub": "Start VeloceNet-Studio automatically when you sign in"
 }

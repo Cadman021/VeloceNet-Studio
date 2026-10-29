@@ -280,5 +280,7 @@
   "routeUnchanged": "مسیر پایدار",
   "routeChangeSummary": "{changed} تغییر · {added} جدید · {removed} حذف",
   "routeAck": "بستن",
-  "retraceNow": "trace مجدد"
+  "retraceNow": "trace مجدد",
+  "launchAtLogin": "اجرا هنگام ورود",
+  "launchAtLoginSub": "هنگام ورود به سیستم، VeloceNet-Studio خودکار اجرا شود"
 }

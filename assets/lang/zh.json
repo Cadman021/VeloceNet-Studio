@@ -280,5 +280,7 @@
   "routeUnchanged": "路由稳定",
   "routeChangeSummary": "{changed} 变更 · {added} 新增 · {removed} 丢失",
   "routeAck": "忽略",
-  "retraceNow": "重新追踪"
+  "retraceNow": "重新追踪",
+  "launchAtLogin": "登录时启动",
+  "launchAtLoginSub": "登录系统时自动启动 VeloceNet-Studio"
 }
