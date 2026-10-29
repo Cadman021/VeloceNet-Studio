@@ -128,16 +128,11 @@ mod live_tests {
                 continue;
             }
             let mut buf = [0u8; 1500];
-            loop {
-                match sock.recv_from(&mut buf) {
-                    Ok((n, _)) => {
-                        if is_handshake_response(&buf[..n], sender) {
-                            println!("LIVE handshake reply from {ip}:{port} ({n} bytes)");
-                            ok = true;
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+            while let Ok((n, _)) = sock.recv_from(&mut buf) {
+                if is_handshake_response(&buf[..n], sender) {
+                    println!("LIVE handshake reply from {ip}:{port} ({n} bytes)");
+                    ok = true;
+                    break;
                 }
             }
             if ok {

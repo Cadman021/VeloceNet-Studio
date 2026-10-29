@@ -126,3 +126,49 @@ fn default_http_port(port: u16, tls: bool) -> u16 {
         80
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::probe::tcp::ProbeResult;
+
+    /// The `icmp_unavailable` flag is the ONLY thing that licenses the TCP
+    /// fallback: a genuine ICMP failure (timeout, TTL expired, unreachable)
+    /// must keep its ICMP verdict or the matrix would silently mix TCP RTTs
+    /// into ICMP loss/RTT accounting. This pins that contract on every
+    /// platform so the classification can't drift unnoticed.
+    #[test]
+    fn icmp_unavailable_is_the_only_fallback_trigger() {
+        let genuine = ProbeResult::failure("ICMP request timed out");
+        assert!(!genuine.icmp_unavailable);
+
+        let refused = ProbeResult::icmp_unavailable("ICMP datagram sockets unavailable");
+        assert!(refused.icmp_unavailable);
+        assert!(!refused.success);
+
+        let ok = ProbeResult::success(1.5);
+        assert!(!ok.icmp_unavailable);
+        assert!(ok.success);
+    }
+
+    #[test]
+    fn http_protocol_ids_map_both_directions() {
+        assert_eq!(ProbeProtocol::from_u32(2), ProbeProtocol::Http);
+        assert_eq!(ProbeProtocol::from_u32(3), ProbeProtocol::Https);
+        assert_eq!(ProbeProtocol::from_u32(0), ProbeProtocol::Icmp);
+        assert_eq!(ProbeProtocol::from_u32(1), ProbeProtocol::Tcp);
+        // Unknown ids degrade to ICMP (the historical default), never panic.
+        assert_eq!(ProbeProtocol::from_u32(99), ProbeProtocol::Icmp);
+        assert_eq!(ProbeProtocol::Http.as_str(), "HTTP");
+        assert_eq!(ProbeProtocol::Https.as_str(), "HTTPS");
+    }
+
+    #[test]
+    fn default_http_port_respects_explicit_and_scheme_defaults() {
+        assert_eq!(default_http_port(0, false), 80);
+        assert_eq!(default_http_port(0, true), 443);
+        // An explicit port always wins, even on the "wrong" scheme.
+        assert_eq!(default_http_port(8080, false), 8080);
+        assert_eq!(default_http_port(8443, true), 8443);
+    }
+}
