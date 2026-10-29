@@ -282,5 +282,10 @@
   "routeAck": "Dismiss",
   "retraceNow": "Re-trace now",
   "launchAtLogin": "Launch at login",
-  "launchAtLoginSub": "Start VeloceNet-Studio automatically when you sign in"
+  "launchAtLoginSub": "Start VeloceNet-Studio automatically when you sign in",
+  "ntfyServer": "ntfy server (optional)",
+  "ntfyTopic": "ntfy topic",
+  "genericWebhook": "Generic webhook",
+  "genericWebhookHint": "POSTs a JSON envelope {text, event} to any http(s) endpoint",
+  "genericWebhookUrl": "Webhook URL"
 }

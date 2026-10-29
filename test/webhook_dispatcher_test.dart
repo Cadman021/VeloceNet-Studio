@@ -227,5 +227,91 @@ void main() {
       dispatcher.dispose();
       log.dispose();
     });
+
+    test('ntfy and generic channels fire with their own body shapes',
+        () async {
+      final calls = <String>[];
+      final log = AlertLog();
+      final dispatcher = WebhookDispatcher(
+        log: log,
+        configOf: () => const WebhookConfig(
+          ntfyEnabled: true,
+          ntfyTopic: 'velocenet-alerts',
+          genericEnabled: true,
+          genericUrl: 'https://example.com/hook',
+        ),
+        poster: (url, headers, body) async {
+          calls.add('${url.host}${url.path}|${body.contains('{') ? 'json' : 'text'}');
+          return true;
+        },
+      );
+      final ok = await dispatcher.dispatch(
+        _event(9, TargetStatus.online, TargetStatus.offline),
+        now: DateTime.utc(2026, 9, 30, 12, 0),
+      );
+      expect(ok, isTrue);
+      expect(calls, hasLength(2));
+      expect(calls[0], 'ntfy.sh/velocenet-alerts|text');
+      expect(calls[1], 'example.com/hook|json');
+      dispatcher.dispose();
+      log.dispose();
+    });
+
+    test('generic webhook body carries the machine envelope', () async {
+      String? body;
+      final log = AlertLog();
+      final dispatcher = WebhookDispatcher(
+        log: log,
+        configOf: () => const WebhookConfig(
+          genericEnabled: true,
+          genericUrl: 'https://example.com/hook',
+        ),
+        poster: (_, __, b) async {
+          body = b;
+          return true;
+        },
+      );
+      await dispatcher.dispatch(
+        _event(4, TargetStatus.online, TargetStatus.offline),
+        now: DateTime.utc(2026, 9, 30, 12, 0),
+      );
+      expect(body, isNotNull);
+      expect(body, contains('"to":"offline"'));
+      expect(body, contains('"severity":"critical"'));
+      expect(body, contains('"from":"online"'));
+      dispatcher.dispose();
+      log.dispose();
+    });
+  });
+
+  group('ntfy endpoint', () {
+    test('defaults to ntfy.sh when the server is blank', () {
+      expect(ntfyEndpoint(server: '', topic: 'mytopic').toString(),
+          'https://ntfy.sh/mytopic');
+      expect(ntfyEndpoint(server: '   ', topic: 'mytopic').toString(),
+          'https://ntfy.sh/mytopic');
+    });
+
+    test('adds https when the scheme is omitted', () {
+      expect(ntfyEndpoint(server: 'ntfy.example.com', topic: 't').toString(),
+          'https://ntfy.example.com/t');
+    });
+
+    test('keeps an explicit http scheme (self-hosted on a LAN)', () {
+      expect(ntfyEndpoint(server: 'http://10.0.0.5:8080', topic: 't').toString(),
+          'http://10.0.0.5:8080/t');
+    });
+
+    test('normalizes a pasted topic path or full URL to the last segment', () {
+      expect(ntfyEndpoint(server: '', topic: '/mytopic')!.path, '/mytopic');
+      expect(ntfyEndpoint(server: '', topic: 'https://ntfy.sh/mytopic')!.path,
+          '/mytopic');
+    });
+
+    test('rejects invalid topics', () {
+      for (final bad in ['', '   ', 'has space', 'a' * 65, 'bad!char']) {
+        expect(ntfyEndpoint(server: '', topic: bad), isNull, reason: bad);
+      }
+    });
   });
 }

@@ -54,6 +54,11 @@ class _MainShellViewState extends State<MainShellView> with WindowListener {
         telegramChatId: widget.settings.telegramChatId,
         discordEnabled: widget.settings.discordEnabled,
         discordUrl: widget.settings.discordUrl,
+        ntfyEnabled: widget.settings.ntfyEnabled,
+        ntfyServer: widget.settings.ntfyServer,
+        ntfyTopic: widget.settings.ntfyTopic,
+        genericEnabled: widget.settings.genericEnabled,
+        genericUrl: widget.settings.genericUrl,
         template: widget.settings.webhookTemplate.isEmpty
             ? kDefaultAlertTemplate
             : widget.settings.webhookTemplate,

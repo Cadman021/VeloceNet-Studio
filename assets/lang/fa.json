@@ -282,5 +282,10 @@
   "routeAck": "بستن",
   "retraceNow": "trace مجدد",
   "launchAtLogin": "اجرا هنگام ورود",
-  "launchAtLoginSub": "هنگام ورود به سیستم، VeloceNet-Studio خودکار اجرا شود"
+  "launchAtLoginSub": "هنگام ورود به سیستم، VeloceNet-Studio خودکار اجرا شود",
+  "ntfyServer": "سرور ntfy (اختیاری)",
+  "ntfyTopic": "موضوع ntfy",
+  "genericWebhook": "وب‌هوک عمومی",
+  "genericWebhookHint": "یک بسته JSON شامل {text, event} را به هر آدرس http(s) ارسال می‌کند",
+  "genericWebhookUrl": "آدرس وب‌هوک"
 }

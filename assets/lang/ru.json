@@ -282,5 +282,10 @@
   "routeAck": "Скрыть",
   "retraceNow": "Повторить трассировку",
   "launchAtLogin": "Запускать при входе",
-  "launchAtLoginSub": "Автоматически запускать VeloceNet-Studio при входе в систему"
+  "launchAtLoginSub": "Автоматически запускать VeloceNet-Studio при входе в систему",
+  "ntfyServer": "Сервер ntfy (необязательно)",
+  "ntfyTopic": "Топик ntfy",
+  "genericWebhook": "Универсальный webhook",
+  "genericWebhookHint": "Отправляет JSON-конверт {text, event} на любой http(s)-адрес",
+  "genericWebhookUrl": "URL webhook"
 }

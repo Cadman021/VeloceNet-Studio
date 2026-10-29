@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../core/validation/host_validator.dart' show isValidDiscordWebhookUrl;
+import '../core/validation/host_validator.dart'
+    show isValidDiscordWebhookUrl, isValidGenericWebhookUrl, isValidNtfyTopic;
 import '../models/alert_event.dart';
 import '../state/alert_log.dart';
 
-/// Outbound alert delivery: Telegram bot + Discord webhook.
+/// Outbound alert delivery: Telegram bot + Discord webhook + ntfy +
+/// generic webhook.
 ///
 /// Design notes:
 /// - Fires on every recorded [AlertEvent] (transitions only, so volume is
@@ -23,6 +25,14 @@ class WebhookConfig {
   final String telegramChatId;
   final bool discordEnabled;
   final String discordUrl;
+  final bool ntfyEnabled;
+
+  /// ntfy server base URL (e.g. `https://ntfy.sh`). Empty = the public
+  /// default, resolved by [ntfyEndpoint].
+  final String ntfyServer;
+  final String ntfyTopic;
+  final bool genericEnabled;
+  final String genericUrl;
   final String template;
 
   /// Optional `PROXY host:port` directive (see [buildProxyDirective]).
@@ -34,6 +44,11 @@ class WebhookConfig {
     this.telegramChatId = '',
     this.discordEnabled = false,
     this.discordUrl = '',
+    this.ntfyEnabled = false,
+    this.ntfyServer = '',
+    this.ntfyTopic = '',
+    this.genericEnabled = false,
+    this.genericUrl = '',
     this.template = kDefaultAlertTemplate,
     this.proxyDirective,
   });
@@ -44,6 +59,41 @@ class WebhookConfig {
       telegramChatId.trim().isNotEmpty;
 
   bool get canDiscord => discordEnabled && isValidDiscordWebhookUrl(discordUrl);
+
+  bool get canNtfy => ntfyEnabled && isValidNtfyTopic(ntfyTopic);
+
+  bool get canGeneric =>
+      genericEnabled && isValidGenericWebhookUrl(genericUrl);
+}
+
+/// Default ntfy server when the operator leaves the server field blank.
+const String kNtfyDefaultServer = 'https://ntfy.sh';
+
+/// Builds the ntfy publish URL for a topic on an optional custom server.
+/// Pure and unit tested. Returns null when the topic is invalid.
+/// A topic pasted as `/mytopic` or a full URL is normalized to its last
+/// path segment so copy-paste from the ntfy web app just works.
+Uri? ntfyEndpoint({required String server, required String topic}) {
+  var rawTopic = topic.trim();
+  if (rawTopic.contains('/')) {
+    final segments = rawTopic.split('/').where((s) => s.isNotEmpty).toList();
+    rawTopic = segments.isEmpty ? '' : segments.last;
+  }
+  if (!isValidNtfyTopic(rawTopic)) return null;
+
+  var base = server.trim();
+  if (base.isEmpty) base = kNtfyDefaultServer;
+  if (!base.startsWith('http://') && !base.startsWith('https://')) {
+    base = 'https://$base';
+  }
+  final Uri parsed;
+  try {
+    parsed = Uri.parse(base);
+  } catch (_) {
+    return null;
+  }
+  if (parsed.host.isEmpty) return null;
+  return parsed.replace(path: '/$rawTopic');
 }
 
 typedef HttpPoster = Future<bool> Function(
@@ -80,7 +130,7 @@ String? buildProxyDirective({required bool enabled, required String address}) {
 }
 
 /// POSTs JSON through an optional HTTP proxy (direct when [proxy] is null).
-Future<bool> postJson(Uri url, Map<String, String> body,
+Future<bool> postJson(Uri url, Map<String, dynamic> body,
     {String? proxy}) async {
   final payload = jsonEncode(body);
   if (proxy == null) {
@@ -231,6 +281,38 @@ class WebhookDispatcher {
         _enqueue(_OutboxEntry(render: render, send: send, firstFailedAt: at));
       }
     }
+    if (config.canNtfy) {
+      final url = ntfyEndpoint(
+          server: config.ntfyServer, topic: config.ntfyTopic);
+      if (url != null) {
+        // ntfy takes the message as the raw request body; title/priority
+        // ride as headers. Published at default priority so a recovery is
+        // not louder than the outage.
+        Future<bool> send(String message) => _deliverNtfy(config, url, message);
+        if (await send(render(Duration.zero))) {
+          sent = true;
+        } else {
+          _enqueue(
+              _OutboxEntry(render: render, send: send, firstFailedAt: at));
+        }
+      }
+    }
+    if (config.canGeneric) {
+      final url = Uri.parse(config.genericUrl.trim());
+      // Generic receivers get a JSON envelope mirroring the documented
+      // alert fields, so a receiver can branch on severity/status without
+      // parsing the human message.
+      Future<bool> send(String message) => _deliver(
+            config,
+            url,
+            {'text': message, 'event': event.toJson()},
+          );
+      if (await send(render(Duration.zero))) {
+        sent = true;
+      } else {
+        _enqueue(_OutboxEntry(render: render, send: send, firstFailedAt: at));
+      }
+    }
     if (sent) _lastSent[key] = at;
     return sent;
   }
@@ -283,10 +365,47 @@ class WebhookDispatcher {
   /// HTTP proxy when set (the fake poster in tests has no proxy support by
   /// design — proxy parsing itself is covered by unit tests).
   Future<bool> _deliver(
-      WebhookConfig config, Uri url, Map<String, String> body) async {
+      WebhookConfig config, Uri url, Map<String, dynamic> body) async {
     final proxy = config.proxyDirective;
     if (proxy != null) return postJson(url, body, proxy: proxy);
     return _post(url, {'Content-Type': 'application/json'}, jsonEncode(body));
+  }
+
+  /// ntfy publishes the message as the raw request body (not JSON), with
+  /// metadata in headers. Uses the custom poster so tests can assert it.
+  Future<bool> _deliverNtfy(
+      WebhookConfig config, Uri url, String message) async {
+    final headers = {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Title': 'VeloceNet alert',
+      'Tags': 'warning',
+    };
+    final proxy = config.proxyDirective;
+    if (proxy != null) {
+      return _postTextViaProxy(url, headers, message, proxy);
+    }
+    return _post(url, headers, message);
+  }
+
+  /// POSTs a plain-text body through an HTTP proxy (ntfy path). Mirrors
+  /// [postJson]'s proxy handling but keeps the raw text body + headers.
+  Future<bool> _postTextViaProxy(Uri url, Map<String, String> headers,
+      String body, String proxy) async {
+    HttpClient? client;
+    try {
+      client = HttpClient()..findProxy = (_) => proxy;
+      final req =
+          await client.postUrl(url).timeout(const Duration(seconds: 10));
+      headers.forEach(req.headers.set);
+      req.write(body);
+      final resp = await req.close().timeout(const Duration(seconds: 10));
+      await resp.drain<void>();
+      return resp.statusCode >= 200 && resp.statusCode < 300;
+    } catch (_) {
+      return false;
+    } finally {
+      client?.close(force: true);
+    }
   }
 
   /// Sends a fixed test message (bypasses the cooldown).
@@ -317,6 +436,21 @@ class WebhookDispatcher {
             config,
             Uri.parse(config.discordUrl.trim()),
             {'content': message},
+          ) ||
+          sent;
+    }
+    if (config.canNtfy) {
+      final url = ntfyEndpoint(
+          server: config.ntfyServer, topic: config.ntfyTopic);
+      if (url != null) {
+        sent = await _deliverNtfy(config, url, message) || sent;
+      }
+    }
+    if (config.canGeneric) {
+      sent = await _deliver(
+            config,
+            Uri.parse(config.genericUrl.trim()),
+            {'text': message, 'test': true},
           ) ||
           sent;
     }

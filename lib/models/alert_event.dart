@@ -36,4 +36,19 @@ class AlertEvent {
         return AlertSeverity.info;
     }
   }
+
+  /// Machine-readable envelope for generic webhook receivers: stable enum
+  /// names (not localized labels) plus the raw metrics, so a receiver can
+  /// branch on severity/transition without parsing the human message.
+  Map<String, String> toJson() => {
+        'id': '$id',
+        'targetId': '$targetId',
+        'targetName': targetName,
+        'from': from.name,
+        'to': to.name,
+        'severity': severity.name,
+        'timestamp': timestamp.toUtc().toIso8601String(),
+        'rttMs': rttMs > 0 ? rttMs.toStringAsFixed(1) : '',
+        'lossRate': lossRate > 0 ? lossRate.toStringAsFixed(1) : '',
+      };
 }

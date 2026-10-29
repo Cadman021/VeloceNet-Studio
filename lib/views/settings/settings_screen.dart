@@ -28,6 +28,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _tgTokenController;
   late final TextEditingController _tgChatController;
   late final TextEditingController _dcUrlController;
+  late final TextEditingController _ntfyServerController;
+  late final TextEditingController _ntfyTopicController;
+  late final TextEditingController _genericUrlController;
   late final TextEditingController _templateController;
   late final TextEditingController _proxyController;
   bool _testing = false;
@@ -45,6 +48,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _tgTokenController = TextEditingController(text: settings.telegramToken);
     _tgChatController = TextEditingController(text: settings.telegramChatId);
     _dcUrlController = TextEditingController(text: settings.discordUrl);
+    _ntfyServerController =
+        TextEditingController(text: settings.ntfyServer);
+    _ntfyTopicController = TextEditingController(text: settings.ntfyTopic);
+    _genericUrlController =
+        TextEditingController(text: settings.genericUrl);
     _templateController = TextEditingController(text: settings.webhookTemplate);
     _proxyController = TextEditingController(text: settings.proxyAddress);
   }
@@ -55,6 +63,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _tgTokenController.dispose();
     _tgChatController.dispose();
     _dcUrlController.dispose();
+    _ntfyServerController.dispose();
+    _ntfyTopicController.dispose();
+    _genericUrlController.dispose();
     _templateController.dispose();
     _proxyController.dispose();
     super.dispose();
@@ -75,6 +86,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       url: _dcUrlController.text.trim(),
       template: _templateController.text,
       proxyAddress: _proxyController.text.trim(),
+      ntfyServer: _ntfyServerController.text.trim(),
+      ntfyTopic: _ntfyTopicController.text.trim(),
+      genericUrl: _genericUrlController.text.trim(),
     );
   }
 
@@ -134,6 +148,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               tgTokenController: _tgTokenController,
               tgChatController: _tgChatController,
               dcUrlController: _dcUrlController,
+              ntfyServerController: _ntfyServerController,
+              ntfyTopicController: _ntfyTopicController,
+              genericUrlController: _genericUrlController,
               templateController: _templateController,
               proxyController: _proxyController,
               onSecretChanged: _scheduleSecretSave,

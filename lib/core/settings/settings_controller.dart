@@ -25,6 +25,11 @@ class SettingsController extends ChangeNotifier {
   static const _kTgChat = 'settings.tgChat';
   static const _kDcEnabled = 'settings.dcEnabled';
   static const _kDcUrl = 'settings.dcUrl';
+  static const _kNtfyEnabled = 'settings.ntfyEnabled';
+  static const _kNtfyServer = 'settings.ntfyServer';
+  static const _kNtfyTopic = 'settings.ntfyTopic';
+  static const _kGenericEnabled = 'settings.genericEnabled';
+  static const _kGenericUrl = 'settings.genericUrl';
   static const _kWhTemplate = 'settings.whTemplate';
   static const _kProxyEnabled = 'settings.proxyEnabled';
   static const _kProxy = 'settings.proxy';
@@ -54,6 +59,16 @@ class SettingsController extends ChangeNotifier {
   String telegramChatId = '';
   bool discordEnabled = false;
   String discordUrl = '';
+  // ntfy (https://ntfy.sh or a self-hosted server). The server defaults to
+  // the public instance when blank; topic is validated before enabling.
+  bool ntfyEnabled = false;
+  String ntfyServer = '';
+  String ntfyTopic = '';
+  // Generic webhook: any http(s) endpoint receiving a JSON envelope.
+  // The URL may be sensitive (it can embed a token), so it is stored via
+  // the same protected SecretStore as the other channels.
+  bool genericEnabled = false;
+  String genericUrl = '';
   // Custom alert template (empty = built-in default). Placeholders:
   // {icon} {name} {from} {to} {detail}.
   String webhookTemplate = '';
@@ -136,15 +151,21 @@ class SettingsController extends ChangeNotifier {
           allowedLocales.contains(loc) ? Locale(loc!) : const Locale('en');
       telegramEnabled = prefs.getBool(_kTgEnabled) ?? false;
       discordEnabled = prefs.getBool(_kDcEnabled) ?? false;
+      ntfyEnabled = prefs.getBool(_kNtfyEnabled) ?? false;
+      ntfyServer = prefs.getString(_kNtfyServer) ?? '';
+      ntfyTopic = prefs.getString(_kNtfyTopic) ?? '';
+      genericEnabled = prefs.getBool(_kGenericEnabled) ?? false;
       // Parallel: three sequential timeouts would stall startup 3x.
       final secrets = await Future.wait([
         _readSecret(_kTgToken),
         _readSecret(_kTgChat),
         _readSecret(_kDcUrl),
+        _readSecret(_kGenericUrl),
       ]);
       telegramToken = secrets[0];
       telegramChatId = secrets[1];
       discordUrl = secrets[2];
+      genericUrl = secrets[3];
       webhookTemplate = prefs.getString(_kWhTemplate) ?? '';
       proxyEnabled = prefs.getBool(_kProxyEnabled) ?? false;
       proxyAddress = prefs.getString(_kProxy) ?? '';
@@ -219,12 +240,17 @@ class SettingsController extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kTgEnabled, telegramEnabled);
       await prefs.setBool(_kDcEnabled, discordEnabled);
+      await prefs.setBool(_kNtfyEnabled, ntfyEnabled);
+      await prefs.setString(_kNtfyServer, ntfyServer);
+      await prefs.setString(_kNtfyTopic, ntfyTopic);
+      await prefs.setBool(_kGenericEnabled, genericEnabled);
       await prefs.setString(_kWhTemplate, webhookTemplate);
     } catch (_) {}
     final results = await Future.wait([
       _writeSecret(_kTgToken, telegramToken),
       _writeSecret(_kTgChat, telegramChatId),
       _writeSecret(_kDcUrl, discordUrl),
+      _writeSecret(_kGenericUrl, genericUrl),
     ]);
     final ok = !results.contains(false);
     if ((ok && secretWarning != null) || (!ok && secretWarning == null)) {
@@ -249,6 +275,22 @@ class SettingsController extends ChangeNotifier {
     await _saveWebhookPrefs();
   }
 
+  Future<void> setNtfy(
+      {bool? enabled, String? server, String? topic}) async {
+    if (enabled != null) ntfyEnabled = enabled;
+    if (server != null) ntfyServer = server;
+    if (topic != null) ntfyTopic = topic;
+    notifyListeners();
+    await _saveWebhookPrefs();
+  }
+
+  Future<void> setGenericWebhook({bool? enabled, String? url}) async {
+    if (enabled != null) genericEnabled = enabled;
+    if (url != null) genericUrl = url;
+    notifyListeners();
+    await _saveWebhookPrefs();
+  }
+
   Future<void> setWebhookTemplate(String template) async {
     webhookTemplate = template;
     notifyListeners();
@@ -263,12 +305,18 @@ class SettingsController extends ChangeNotifier {
     String? url,
     String? template,
     String? proxyAddress,
+    String? ntfyServer,
+    String? ntfyTopic,
+    String? genericUrl,
   }) async {
     if (token != null) telegramToken = token;
     if (chatId != null) telegramChatId = chatId;
     if (url != null) discordUrl = url;
     if (template != null) webhookTemplate = template;
     if (proxyAddress != null) this.proxyAddress = proxyAddress;
+    if (ntfyServer != null) this.ntfyServer = ntfyServer;
+    if (ntfyTopic != null) this.ntfyTopic = ntfyTopic;
+    if (genericUrl != null) this.genericUrl = genericUrl;
     notifyListeners();
     await _saveWebhookPrefs();
   }

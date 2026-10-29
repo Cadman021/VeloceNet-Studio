@@ -11,6 +11,9 @@ class SettingsWebhooksSection extends StatelessWidget {
   final TextEditingController tgTokenController;
   final TextEditingController tgChatController;
   final TextEditingController dcUrlController;
+  final TextEditingController ntfyServerController;
+  final TextEditingController ntfyTopicController;
+  final TextEditingController genericUrlController;
   final TextEditingController templateController;
   final TextEditingController proxyController;
   final VoidCallback onSecretChanged;
@@ -23,6 +26,9 @@ class SettingsWebhooksSection extends StatelessWidget {
     required this.tgTokenController,
     required this.tgChatController,
     required this.dcUrlController,
+    required this.ntfyServerController,
+    required this.ntfyTopicController,
+    required this.genericUrlController,
     required this.templateController,
     required this.proxyController,
     required this.onSecretChanged,
@@ -88,6 +94,48 @@ class SettingsWebhooksSection extends StatelessWidget {
           SettingsSecretField(
             controller: dcUrlController,
             label: strings.get('discordWebhookUrl'),
+            mono: true,
+            onChanged: (_) => onSecretChanged(),
+          ),
+          const Divider(height: 24),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('ntfy'),
+            value: settings.ntfyEnabled,
+            onChanged: (v) => settings.setNtfy(enabled: v),
+          ),
+          SettingsSecretField(
+            controller: ntfyServerController,
+            label: strings.get('ntfyServer'),
+            hint: 'https://ntfy.sh',
+            mono: true,
+            obscure: false,
+            onChanged: (_) => onSecretChanged(),
+          ),
+          const SizedBox(height: 8),
+          SettingsSecretField(
+            controller: ntfyTopicController,
+            label: strings.get('ntfyTopic'),
+            hint: 'velocenet-alerts',
+            mono: true,
+            obscure: false,
+            onChanged: (_) => onSecretChanged(),
+          ),
+          const Divider(height: 24),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(strings.get('genericWebhook')),
+            subtitle: Text(
+              strings.get('genericWebhookHint'),
+              style: TextStyle(color: context.textMutedColor, fontSize: 11),
+            ),
+            value: settings.genericEnabled,
+            onChanged: (v) => settings.setGenericWebhook(enabled: v),
+          ),
+          SettingsSecretField(
+            controller: genericUrlController,
+            label: strings.get('genericWebhookUrl'),
+            hint: 'https://example.com/hooks/velocenet',
             mono: true,
             onChanged: (_) => onSecretChanged(),
           ),

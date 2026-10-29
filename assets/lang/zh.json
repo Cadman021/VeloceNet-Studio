@@ -282,5 +282,10 @@
   "routeAck": "忽略",
   "retraceNow": "重新追踪",
   "launchAtLogin": "登录时启动",
-  "launchAtLoginSub": "登录系统时自动启动 VeloceNet-Studio"
+  "launchAtLoginSub": "登录系统时自动启动 VeloceNet-Studio",
+  "ntfyServer": "ntfy 服务器（可选）",
+  "ntfyTopic": "ntfy 主题",
+  "genericWebhook": "通用 Webhook",
+  "genericWebhookHint": "向任意 http(s) 地址发送 JSON 信封 {text, event}",
+  "genericWebhookUrl": "Webhook 地址"
 }

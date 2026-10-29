@@ -56,3 +56,28 @@ bool isValidDiscordWebhookUrl(String raw) {
       host.endsWith('.discord.com') ||
       host.endsWith('.discordapp.com');
 }
+
+/// Validates a generic outbound webhook URL: absolute http(s) with a host.
+/// Deliberately NOT scheme-locked to https — self-hosted receivers (ntfy,
+/// Gotify, an internal bridge) commonly run on plain http on a LAN, and the
+/// URL is entered by the operator, not attacker-controlled.
+bool isValidGenericWebhookUrl(String raw) {
+  Uri? uri;
+  try {
+    uri = Uri.parse(raw.trim());
+  } catch (_) {
+    return false;
+  }
+  if (!uri.isAbsolute) return false;
+  if (uri.scheme != 'https' && uri.scheme != 'http') return false;
+  return uri.host.isNotEmpty;
+}
+
+/// Validates an ntfy topic name (the path component appended to the ntfy
+/// server URL). ntfy allows `[-_A-Za-z0-9]`, 1–64 chars; a leading `/` from
+/// a pasted URL is tolerated and stripped by the caller.
+bool isValidNtfyTopic(String raw) {
+  final topic = raw.trim();
+  if (topic.isEmpty || topic.length > 64) return false;
+  return RegExp(r'^[-_A-Za-z0-9]+$').hasMatch(topic);
+}
