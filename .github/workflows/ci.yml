@@ -1,17 +1,15 @@
 name: CI
 
-# Pin the SDK instead of tracking `channel: stable`: the checked-in
-# pubspec.lock is generated on this version, and several dependencies are
-# SDK-conditional. With an unpinned runner on Flutter 3.50 the lock still
-# pinned nativeapi 0.5.10, whose run_native_app.dart uses `Isolate.create`
-# (gone in Dart 3.14), so `flutter test` stopped compiling; the 0.5.11 fix
-# requires Dart ^3.14 and can only be locked from a 3.50 SDK. `flutter
-# analyze` also fails on info-level findings, so a newer stable that
-# deprecates any API the tree uses turns every PR red on its own.
-# To move to 3.50: upgrade the local SDK first, then regenerate the lock and
-# land the material_ui / leanflutter 0.6 bumps in one PR.
+# Pin the SDK instead of tracking `channel: stable`. The checked-in
+# pubspec.lock is generated on this version and several dependencies resolve
+# differently per SDK (nativeapi is the loudest: 0.5.10 needs Dart ^3.13 and
+# 0.5.11+ needs ^3.14), so a runner that drifts ahead of the lock breaks
+# `flutter test` compilation on its own. `flutter analyze` also fails on
+# info-level findings, which makes every new SDK deprecation a red PR.
+# Bumping this is deliberate: upgrade the local SDK to the same version, run
+# `flutter pub get`, and commit the regenerated lock in the same PR.
 env:
-  FLUTTER_VERSION: "3.47.0"
+  FLUTTER_VERSION: "3.50.1"
 
 on:
   push:
