@@ -17,17 +17,19 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   cupertino_icons: ^2.0.0
+  cupertino_ui: ^1.1.7
   ffi: ^2.1.2
   http: ^1.6.0
   intl: ^0.20.2
+  material_ui: ^1.11.1
   path_provider: ^2.1.6
   shared_preferences: ^2.5.6
   url_launcher: ^6.3.3
   # NOTE: flutter_secure_storage was dropped: its Windows backend needs
   # ATL headers (atlstr.h) absent from default VS installs, breaking
   # `flutter run`. Secrets use DPAPI-via-FFI instead (see secret_store.dart).
-  tray_manager: ^0.8.3
-  window_manager: ^0.6.0
+  tray_manager: ^0.9.0
+  window_manager: ^0.7.0
 
 dev_dependencies:
   flutter_test:

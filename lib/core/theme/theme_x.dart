@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Adaptive colors: dark cyber palette in dark mode, clean light palette
 /// in light mode. Replaces direct `AppColors.surface/background/...`

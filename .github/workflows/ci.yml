@@ -1,13 +1,15 @@
 name: CI
 
-# Pin the SDK instead of tracking `channel: stable`. `flutter analyze` fails on
-# info-level findings, and deprecations are infos, so an unpinned runner turns
-# every PR red the day stable starts deprecating an API the tree still uses
-# (Flutter 3.50 deprecates `package:flutter/material.dart` in favour of
-# `package:material_ui/material_ui.dart`). Bump this together with the
-# material_ui migration, not on its own.
+# Pin the SDK instead of tracking `channel: stable`. The checked-in
+# pubspec.lock is generated on this version and several dependencies resolve
+# differently per SDK (nativeapi is the loudest: 0.5.10 needs Dart ^3.13 and
+# 0.5.11+ needs ^3.14), so a runner that drifts ahead of the lock breaks
+# `flutter test` compilation on its own. `flutter analyze` also fails on
+# info-level findings, which makes every new SDK deprecation a red PR.
+# Bumping this is deliberate: upgrade the local SDK to the same version, run
+# `flutter pub get`, and commit the regenerated lock in the same PR.
 env:
-  FLUTTER_VERSION: "3.47.0"
+  FLUTTER_VERSION: "3.50.1"
 
 on:
   push:

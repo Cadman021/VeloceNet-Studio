@@ -1,16 +1,8 @@
-// window_manager 0.6.0 moved the 0.5.x API (`windowManager`, `WindowListener`)
-// to `package:window_manager/legacy.dart`, the bridge it ships for existing
-// apps, and marked every member of it `@Deprecated`. The tray code below still
-// uses that bridge; the lint is silenced file-wide because `flutter analyze`
-// treats infos as errors and CI would fail on every call site. Porting the tray
-// logic to the native `Window`/`WindowManager` API removes the need for this.
-// ignore_for_file: deprecated_member_use
-
 import 'dart:async';
 import 'dart:io' show Platform;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'package:window_manager/legacy.dart';
+import 'package:window_manager/window_manager.dart';
 import '../core/i18n/app_strings.dart';
 import '../core/theme/theme_x.dart';
 import '../core/settings/settings_controller.dart';
@@ -37,13 +29,17 @@ class MainShellView extends StatefulWidget {
   State<MainShellView> createState() => _MainShellViewState();
 }
 
-class _MainShellViewState extends State<MainShellView> with WindowListener {
+class _MainShellViewState extends State<MainShellView> {
   int _selectedIndex = 0;
   late final PingMatrixController _pingController;
   late final WarpController _warpController;
   late final WebhookDispatcher _webhooks;
   bool _trayReady = false;
   TrayIcon? _trayIcon;
+  Window? _window;
+  ListenerId? _closeListener;
+  bool _quitting = false;
+  bool _trayRetryScheduled = false;
   Timer? _updateCheckTimer;
 
   @override
@@ -123,22 +119,34 @@ class _MainShellViewState extends State<MainShellView> with WindowListener {
     );
   }
 
-  /// Best-effort tray setup (tray_manager 0.8 native API): any step may
-  /// throw on platforms without tray support (or in widget tests without
-  /// plugins) — the app must work the same without it.
+  /// Best-effort tray setup (window_manager 0.7 native `Window` API):
+  /// any step may throw on platforms without tray support (or in widget tests
+  /// without plugins) — the app must work the same without it.
   Future<void> _setupTray() async {
     if (!widget.settings.trayEnabled || _trayIcon != null) return;
     // Widget tests have no window/tray plugins: some plugin calls never
     // complete there (instead of throwing), which would hang pumpWidget.
     if (Platform.environment.containsKey('FLUTTER_TEST')) return;
     try {
-      await windowManager.ensureInitialized();
+      final window = WindowManager.instance.getCurrent();
+      if (window == null) {
+        // The window registers with the native core after the first frame:
+        // retry once there instead of losing tray mode for the whole session.
+        if (!_trayRetryScheduled) {
+          _trayRetryScheduled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) unawaited(_setupTray());
+          });
+        }
+        return;
+      }
       final icon = TrayIcon.create();
       if (icon == null) return; // tray not supported here
       // The PNG must be a bundled flutter asset (see pubspec); a missing
       // asset yields a null image and an invisible icon.
       final image = ImageAsset.fromAsset('assets/icons/app_icon.png');
       if (image == null) return;
+      _window = window;
       _trayIcon = icon;
       icon.icon = image;
       icon.setTooltip('VeloceNet-Studio');
@@ -148,9 +156,9 @@ class _MainShellViewState extends State<MainShellView> with WindowListener {
       icon.addListener((event) {
         if (event is TrayIconClickedEvent) _toggleWindow();
       });
-      await windowManager.setPreventClose(true);
-      windowManager.removeListener(this);
-      windowManager.addListener(this);
+      // 0.7 dropped `setPreventClose`/`onWindowClose`: a close request is an
+      // event the listener answers (see _onWindowEvent).
+      _closeListener = window.addListener(_onWindowEvent);
       _trayReady = true;
       await _refreshTrayMenu();
     } catch (_) {
@@ -165,8 +173,10 @@ class _MainShellViewState extends State<MainShellView> with WindowListener {
       return;
     }
     try {
+      final window = _window;
+      if (window == null) return;
       final strings = AppStrings(widget.settings.locale);
-      final visible = await windowManager.isVisible();
+      final visible = window.isVisible;
       final menu = Menu.create();
       if (menu == null) return;
       final toggle = MenuItem.createWithLabelAndType(
@@ -183,47 +193,57 @@ class _MainShellViewState extends State<MainShellView> with WindowListener {
         MenuItemType.normal,
       );
       quit?.addListener((event) {
-        if (event is MenuItemClickedEvent) windowManager.destroy();
+        if (event is MenuItemClickedEvent) _quit();
       });
       if (quit != null) menu.addItem(quit);
       icon.setContextMenu(menu);
     } catch (_) {}
   }
 
-  Future<void> _teardownTray() async {
+  void _teardownTray() {
     _trayReady = false;
+    final window = _window;
+    final listener = _closeListener;
     try {
-      windowManager.removeListener(this);
-      await windowManager.setPreventClose(false);
+      if (window != null && listener != null) window.removeListener(listener);
       _trayIcon?.dispose();
     } catch (_) {}
+    _closeListener = null;
     _trayIcon = null;
+    _window = null;
   }
 
   Future<void> _toggleWindow() async {
+    final window = _window;
+    if (window == null) return;
     try {
-      if (await windowManager.isVisible()) {
-        await windowManager.hide();
+      if (window.isVisible) {
+        window.hide();
       } else {
-        await windowManager.show();
+        window.show();
       }
       await _refreshTrayMenu();
     } catch (_) {}
   }
 
-  @override
-  void onWindowClose() async {
-    // With tray mode, closing hides to the tray (monitoring continues);
-    // otherwise the window really closes. The `_trayReady` check matters
-    // on Linux desktops without an appindicator host: there the tray icon
-    // never materializes, and hiding would leave a ghost process with no
-    // window and no tray entry — so fall through to a real close.
-    if (!widget.settings.trayEnabled || !_trayReady) {
-      await windowManager.destroy();
-      return;
-    }
-    await windowManager.hide();
-    await _refreshTrayMenu();
+  /// window_manager 0.7 reports close requests instead of closing: cancelling
+  /// the request keeps the window alive in the tray (monitoring continues).
+  /// The `_trayReady` check matters on Linux desktops without an appindicator
+  /// host, where the icon never materializes: hiding there would leave a ghost
+  /// process with no window and no tray entry, so the request goes through.
+  void _onWindowEvent(WindowEvent event) {
+    if (event is! WindowCloseRequestedEvent) return;
+    if (_quitting) return; // _quit() asked for a real close
+    if (!widget.settings.trayEnabled || !_trayReady) return;
+    event.request.cancel();
+    _window?.hide();
+    unawaited(_refreshTrayMenu());
+  }
+
+  /// Really exits (tray "Quit"): the close listener lets this one through.
+  void _quit() {
+    _quitting = true;
+    _window?.close();
   }
 
   void _addWarpEndpointsToMatrix(List<Map<String, dynamic>> endpoints) {
