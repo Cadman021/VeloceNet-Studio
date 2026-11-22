@@ -1,10 +1,5 @@
 name: Release (Windows + Linux + macOS)
 
-# Same pin as ci.yml: release artifacts must be built by the SDK the analyze
-# gate was green on (see the note in ci.yml).
-env:
-  FLUTTER_VERSION: "3.47.0"
-
 on:
   push:
     tags:
@@ -33,7 +28,7 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
           cache: true
 
       - name: Install dependencies
@@ -86,7 +81,7 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
           cache: true
 
       - name: Install dependencies
@@ -130,7 +125,7 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
           cache: true
 
       - name: Install dependencies

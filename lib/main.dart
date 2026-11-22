@@ -1,5 +1,9 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:material_ui/material_ui.dart';
+// `GlobalMaterialLocalizations` now ships with material_ui; the
+// flutter_localizations copy is the deprecated one, so hide that name here
+// instead of letting the two imports collide.
+import 'package:flutter_localizations/flutter_localizations.dart'
+    hide GlobalMaterialLocalizations;
 import 'core/i18n/app_strings.dart';
 import 'core/settings/settings_controller.dart';
 import 'core/theme/app_theme.dart';

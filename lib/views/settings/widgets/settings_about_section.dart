@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../../../core/app_info.dart';
 import '../../../core/i18n/app_strings.dart';
 import '../../../core/settings/settings_controller.dart';
