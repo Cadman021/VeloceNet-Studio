@@ -15,10 +15,11 @@ class AppColors {
   static const Color purple = Color(0xFF8B5CF6);
 
   // Network Status / Latency Tiers
-  static const Color latencyFast = Color(0xFF10B981);     // < 50ms (Green)
+  static const Color latencyFast = Color(0xFF10B981); // < 50ms (Green)
   static const Color latencyModerate = Color(0xFFF59E0B); // 50-130ms (Amber)
-  static const Color latencySlow = Color(0xFFF97316);     // 130-220ms (Orange)
-  static const Color latencyCritical = Color(0xFFEF4444); // > 220ms or Lost (Red)
+  static const Color latencySlow = Color(0xFFF97316); // 130-220ms (Orange)
+  static const Color latencyCritical =
+      Color(0xFFEF4444); // > 220ms or Lost (Red)
   static const Color pending = Color(0xFF6B7280);
 
   // Text

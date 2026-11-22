@@ -62,8 +62,7 @@ class WebhookConfig {
 
   bool get canNtfy => ntfyEnabled && isValidNtfyTopic(ntfyTopic);
 
-  bool get canGeneric =>
-      genericEnabled && isValidGenericWebhookUrl(genericUrl);
+  bool get canGeneric => genericEnabled && isValidGenericWebhookUrl(genericUrl);
 }
 
 /// Default ntfy server when the operator leaves the server field blank.
@@ -282,8 +281,8 @@ class WebhookDispatcher {
       }
     }
     if (config.canNtfy) {
-      final url = ntfyEndpoint(
-          server: config.ntfyServer, topic: config.ntfyTopic);
+      final url =
+          ntfyEndpoint(server: config.ntfyServer, topic: config.ntfyTopic);
       if (url != null) {
         // ntfy takes the message as the raw request body; title/priority
         // ride as headers. Published at default priority so a recovery is
@@ -292,8 +291,7 @@ class WebhookDispatcher {
         if (await send(render(Duration.zero))) {
           sent = true;
         } else {
-          _enqueue(
-              _OutboxEntry(render: render, send: send, firstFailedAt: at));
+          _enqueue(_OutboxEntry(render: render, send: send, firstFailedAt: at));
         }
       }
     }
@@ -389,8 +387,8 @@ class WebhookDispatcher {
 
   /// POSTs a plain-text body through an HTTP proxy (ntfy path). Mirrors
   /// [postJson]'s proxy handling but keeps the raw text body + headers.
-  Future<bool> _postTextViaProxy(Uri url, Map<String, String> headers,
-      String body, String proxy) async {
+  Future<bool> _postTextViaProxy(
+      Uri url, Map<String, String> headers, String body, String proxy) async {
     HttpClient? client;
     try {
       client = HttpClient()..findProxy = (_) => proxy;
@@ -440,8 +438,8 @@ class WebhookDispatcher {
           sent;
     }
     if (config.canNtfy) {
-      final url = ntfyEndpoint(
-          server: config.ntfyServer, topic: config.ntfyTopic);
+      final url =
+          ntfyEndpoint(server: config.ntfyServer, topic: config.ntfyTopic);
       if (url != null) {
         sent = await _deliverNtfy(config, url, message) || sent;
       }

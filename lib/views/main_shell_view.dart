@@ -8,6 +8,7 @@ import '../core/theme/theme_x.dart';
 import '../core/settings/settings_controller.dart';
 import '../core/theme/app_colors.dart';
 import '../models/ping_target.dart';
+import '../services/desktop_notifier.dart';
 import '../services/webhook_dispatcher.dart';
 import '../state/ping_matrix_controller.dart';
 import 'bandwidth/bandwidth_screen.dart';
@@ -34,9 +35,16 @@ class _MainShellViewState extends State<MainShellView> {
   late final PingMatrixController _pingController;
   late final WarpController _warpController;
   late final WebhookDispatcher _webhooks;
+  late final DesktopNotifier _desktopNotifier;
   bool _trayReady = false;
   TrayIcon? _trayIcon;
   Window? _window;
+  // 0.9's Menu/MenuItem are finalizable native handles. Root the live menu
+  // and its items for as long as the icon exists; otherwise Dart GC can free
+  // them and right-click silently stops opening anything.
+  Menu? _trayMenu;
+  MenuItem? _trayToggleItem;
+  MenuItem? _trayQuitItem;
   ListenerId? _closeListener;
   bool _quitting = false;
   bool _trayRetryScheduled = false;
@@ -72,6 +80,13 @@ class _MainShellViewState extends State<MainShellView> {
         ),
       ),
     );
+    _desktopNotifier = DesktopNotifier(
+      log: _pingController.alertLog,
+      isEnabled: () => widget.settings.desktopNotificationsEnabled,
+      templateOf: () => widget.settings.webhookTemplate.isEmpty
+          ? kDefaultAlertTemplate
+          : widget.settings.webhookTemplate,
+    );
     widget.settings.addListener(_onSettingsChanged);
     _pingController.configureAlerts(
       offlineAfter: widget.settings.alertOfflineAfter,
@@ -96,6 +111,7 @@ class _MainShellViewState extends State<MainShellView> {
     _updateCheckTimer?.cancel();
     widget.settings.removeListener(_onSettingsChanged);
     _teardownTray();
+    _desktopNotifier.dispose();
     _webhooks.dispose();
     _pingController.dispose();
     _warpController.dispose();
@@ -117,6 +133,12 @@ class _MainShellViewState extends State<MainShellView> {
       offlineAfter: widget.settings.alertOfflineAfter,
       recoverAfter: widget.settings.alertRecoverAfter,
     );
+    // Setup can fail transiently (no notification daemon yet, locked Start
+    // Menu); retry when the user opts in instead of requiring a restart.
+    if (widget.settings.desktopNotificationsEnabled &&
+        !DesktopNotificationSupport.initialized) {
+      unawaited(DesktopNotificationSupport.initialize());
+    }
   }
 
   /// Best-effort tray setup (window_manager 0.7 native `Window` API):
@@ -153,7 +175,14 @@ class _MainShellViewState extends State<MainShellView> {
       // New icons start hidden — without this the tray entry exists but
       // is never shown.
       icon.setVisible(true);
+      // 0.9's FFI TrayIcon does not auto-open a context menu by default
+      // (ContextMenuTrigger.none): the native side only logs the right
+      // click. Configure the trigger explicitly.
+      icon.setContextMenuTrigger(ContextMenuTrigger.rightClicked);
       icon.addListener((event) {
+        // Left click toggles the window; right-click opens the context menu
+        // through the trigger configured above (no manual popup, or the
+        // menu would be opened twice).
         if (event is TrayIconClickedEvent) _toggleWindow();
       });
       // 0.7 dropped `setPreventClose`/`onWindowClose`: a close request is an
@@ -177,25 +206,45 @@ class _MainShellViewState extends State<MainShellView> {
       if (window == null) return;
       final strings = AppStrings(widget.settings.locale);
       final visible = window.isVisible;
+      final showHide =
+          visible ? strings.get('trayHide') : strings.get('trayShow');
+
+      // Build once, then only update labels: recreating the menu while the
+      // native popup is still closing (menu item click → hide) risks freeing
+      // the handle under the native menu loop.
+      final existing = _trayMenu;
+      final existingToggle = _trayToggleItem;
+      final existingQuit = _trayQuitItem;
+      if (existing != null && existingToggle != null && existingQuit != null) {
+        existingToggle.label = showHide;
+        existingQuit.label = strings.get('trayQuit');
+        return;
+      }
+
       final menu = Menu.create();
       if (menu == null) return;
       final toggle = MenuItem.createWithLabelAndType(
-        visible ? strings.get('trayHide') : strings.get('trayShow'),
+        showHide,
         MenuItemType.normal,
       );
-      toggle?.addListener((event) {
+      if (toggle == null) return;
+      toggle.addListener((event) {
         if (event is MenuItemClickedEvent) _toggleWindow();
       });
-      if (toggle != null) menu.addItem(toggle);
+      menu.addItem(toggle);
       menu.addSeparator();
       final quit = MenuItem.createWithLabelAndType(
         strings.get('trayQuit'),
         MenuItemType.normal,
       );
-      quit?.addListener((event) {
+      if (quit == null) return;
+      quit.addListener((event) {
         if (event is MenuItemClickedEvent) _quit();
       });
-      if (quit != null) menu.addItem(quit);
+      menu.addItem(quit);
+      _trayMenu = menu;
+      _trayToggleItem = toggle;
+      _trayQuitItem = quit;
       icon.setContextMenu(menu);
     } catch (_) {}
   }
@@ -206,11 +255,18 @@ class _MainShellViewState extends State<MainShellView> {
     final listener = _closeListener;
     try {
       if (window != null && listener != null) window.removeListener(listener);
+      // Detach the menu before freeing the icon so the native side cannot
+      // keep a pointer to a handle Dart is about to release.
+      _trayIcon?.setContextMenu(null);
       _trayIcon?.dispose();
     } catch (_) {}
     _closeListener = null;
     _trayIcon = null;
     _window = null;
+    // Dropping the refs makes the finalizable handles collectable again.
+    _trayMenu = null;
+    _trayToggleItem = null;
+    _trayQuitItem = null;
   }
 
   Future<void> _toggleWindow() async {
@@ -483,7 +539,9 @@ class _MainShellViewState extends State<MainShellView> {
                   const DnslookupScreen(),
                   const MtrScreen(),
                   SettingsScreen(
-                      settings: widget.settings, webhooks: _webhooks),
+                      settings: widget.settings,
+                      webhooks: _webhooks,
+                      desktopNotifier: _desktopNotifier),
                 ],
               ),
             ),

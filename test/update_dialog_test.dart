@@ -76,11 +76,9 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final settings = SettingsController();
       await settings.load();
-      await settings.checkForUpdates(
-          force: true, client: _clientFor('v9.9.9'));
+      await settings.checkForUpdates(force: true, client: _clientFor('v9.9.9'));
       expect(settings.shouldShowUpdateDialog, isTrue);
-      await settings.checkForUpdates(
-          force: true, client: _clientFor('v0.0.1'));
+      await settings.checkForUpdates(force: true, client: _clientFor('v0.0.1'));
       expect(settings.latestKnownVersion, isNull);
       expect(settings.shouldShowUpdateDialog, isFalse);
     });

@@ -39,8 +39,7 @@ class AutostartService {
   /// Whether launch-at-login can be configured on this platform.
   static bool get isSupported => Platform.isWindows || Platform.isLinux;
 
-  String get _executable =>
-      _executableOverride ?? Platform.resolvedExecutable;
+  String get _executable => _executableOverride ?? Platform.resolvedExecutable;
 
   /// True when an autostart entry currently exists for this user.
   Future<bool> isEnabled() async {
@@ -89,7 +88,8 @@ class AutostartService {
     }
     // A missing value makes `reg delete` exit non-zero; that already means
     // "not enabled", so treat it as success.
-    final result = await _run(['reg', 'delete', _runKey, '/v', _valueName, '/f']);
+    final result =
+        await _run(['reg', 'delete', _runKey, '/v', _valueName, '/f']);
     if (result == null) return false;
     return result.exitCode == 0 || result.exitCode == 1;
   }

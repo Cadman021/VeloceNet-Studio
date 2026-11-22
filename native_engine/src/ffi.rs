@@ -11,7 +11,7 @@ use crate::bandwidth::BandwidthMonitor;
 use crate::engine::{Engine, TargetConfig};
 use crate::probe::ProbeProtocol;
 use crate::traceroute::TracerouteManager;
-use crate::warp::WarpManager;
+use crate::warp::{WarpIdentity, WarpManager};
 
 static TRACEROUTE_MANAGER: OnceLock<TracerouteManager> = OnceLock::new();
 
@@ -384,6 +384,50 @@ pub extern "C" fn netstudio_bandwidth_is_running() -> bool {
     ffi_guard(false, || get_bandwidth_monitor().is_running())
 }
 
+/// Parses an `ip:port,ip:port,...` CSV into endpoint pairs.
+///
+/// Hard caps: 256KB input, 4096 endpoints max to avoid OOM. Uses the last
+/// ':' so bare IPv4 works and bracketed IPv6 `[::1]:443` works; bare IPv6
+/// without brackets is rejected (ambiguous port).
+fn parse_warp_endpoints_csv(csv: &str) -> Option<Vec<(String, u16)>> {
+    if csv.len() > 256 * 1024 {
+        return None;
+    }
+    const MAX_WARP_ENDPOINTS: usize = 4096;
+    let mut endpoints: Vec<(String, u16)> = Vec::new();
+    for item in csv.split(',') {
+        if endpoints.len() >= MAX_WARP_ENDPOINTS {
+            return None;
+        }
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let (ip_part, port_part) = match item.rsplit_once(':') {
+            Some((a, b)) => (a.trim(), b.trim()),
+            None => return None,
+        };
+        let ip_str = ip_part.trim_matches(|c| c == '[' || c == ']').trim();
+        if ip_str.is_empty() || ip_str.contains(':') && !ip_part.starts_with('[') {
+            // Likely a bare IPv6 address without port — reject.
+            continue;
+        }
+        let port: u16 = match port_part.parse() {
+            Ok(p) if p >= 1 => p,
+            _ => return None,
+        };
+        if ip_str.len() > 253 {
+            return None;
+        }
+        endpoints.push((ip_str.to_string(), port));
+    }
+    if endpoints.is_empty() {
+        None
+    } else {
+        Some(endpoints)
+    }
+}
+
 /// Starts a warp scan over an `ip:port,...` CSV; returns a session id (`0` = failure).
 ///
 /// # Safety
@@ -403,45 +447,60 @@ pub unsafe extern "C" fn netstudio_warp_start(
             Ok(s) => s,
             Err(_) => return 0,
         };
-        // Format: "ip:port,ip:port,..." — expansion (ranges) happens in Dart.
-        // Hard caps: 256KB input, 4096 endpoints max to avoid OOM.
-        if csv.len() > 256 * 1024 {
-            return 0;
-        }
-        const MAX_WARP_ENDPOINTS: usize = 4096;
-        let mut endpoints: Vec<(String, u16)> = Vec::new();
-        for item in csv.split(',') {
-            if endpoints.len() >= MAX_WARP_ENDPOINTS {
-                return 0;
-            }
-            let item = item.trim();
-            if item.is_empty() {
-                continue;
-            }
-            // Use last ':' so bare IPv4 works; bracketed IPv6 [::1]:443 works.
-            // Bare IPv6 without brackets is rejected (ambiguous port).
-            let (ip_part, port_part) = match item.rsplit_once(':') {
-                Some((a, b)) => (a.trim(), b.trim()),
-                None => return 0,
-            };
-            let ip_str = ip_part.trim_matches(|c| c == '[' || c == ']').trim();
-            if ip_str.is_empty() || ip_str.contains(':') && !ip_part.starts_with('[') {
-                // Likely a bare IPv6 address without port — reject.
-                continue;
-            }
-            let port: u16 = match port_part.parse() {
-                Ok(p) if p >= 1 => p,
-                _ => return 0,
-            };
-            if ip_str.len() > 253 {
-                return 0;
-            }
-            endpoints.push((ip_str.to_string(), port));
-        }
-        if endpoints.is_empty() {
-            return 0;
-        }
+        let endpoints = match parse_warp_endpoints_csv(csv) {
+            Some(v) => v,
+            None => return 0,
+        };
         get_warp_manager().start_scan(endpoints, parallel, timeout_ms)
+    })
+}
+
+/// Starts a warp scan signed by a user WireGuard profile identity.
+///
+/// `private_key` and `peer_key` must each point to exactly 32 bytes (raw
+/// Curve25519 keys decoded by Dart from the imported `.conf`). Passing two
+/// null pointers is equivalent to [`netstudio_warp_start`] (ephemeral
+/// identity + Cloudflare's default peer key); passing only one is invalid
+/// and returns `0`.
+///
+/// # Safety
+/// `endpoints_csv` must be a valid NUL-terminated UTF-8 C string, and each
+/// non-null key pointer must reference 32 readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn netstudio_warp_start_profile(
+    endpoints_csv: *const c_char,
+    parallel: u32,
+    timeout_ms: u32,
+    private_key: *const u8,
+    peer_key: *const u8,
+) -> u32 {
+    ffi_guard(0, || {
+        if endpoints_csv.is_null() {
+            return 0;
+        }
+        let csv = match CStr::from_ptr(endpoints_csv).to_str() {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        let endpoints = match parse_warp_endpoints_csv(csv) {
+            Some(v) => v,
+            None => return 0,
+        };
+        let identity = match (private_key.is_null(), peer_key.is_null()) {
+            (true, true) => None,
+            (false, false) => {
+                let mut private = [0u8; 32];
+                let mut peer = [0u8; 32];
+                std::ptr::copy_nonoverlapping(private_key, private.as_mut_ptr(), 32);
+                std::ptr::copy_nonoverlapping(peer_key, peer.as_mut_ptr(), 32);
+                Some(WarpIdentity {
+                    private_key: private,
+                    peer_key: peer,
+                })
+            }
+            _ => return 0,
+        };
+        get_warp_manager().start_scan_with_identity(endpoints, parallel, timeout_ms, identity)
     })
 }
 
@@ -498,4 +557,47 @@ pub unsafe extern "C" fn netstudio_warp_free(session_id: u32) {
             get_warp_manager().free_session(session_id);
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_warp_start_profile_ffi_accepts_raw_keys() {
+        let csv = CString::new("127.0.0.1:9").expect("csv");
+        let private = [7u8; 32];
+        let peer = [9u8; 32];
+        let session = unsafe {
+            netstudio_warp_start_profile(csv.as_ptr(), 1, 300, private.as_ptr(), peer.as_ptr())
+        };
+        assert_ne!(session, 0, "profile scan must start");
+        // Clean up immediately: the probe is irrelevant to this API test.
+        assert!(unsafe { netstudio_warp_stop(session) });
+        unsafe { netstudio_warp_free(session) };
+    }
+
+    #[test]
+    fn test_warp_start_profile_ffi_rejects_incomplete_input() {
+        let csv = CString::new("127.0.0.1:9").expect("csv");
+        let empty = CString::new("").expect("empty");
+        let key = [1u8; 32];
+        unsafe {
+            // Half an identity (one null key) is invalid.
+            assert_eq!(
+                netstudio_warp_start_profile(csv.as_ptr(), 1, 300, key.as_ptr(), std::ptr::null()),
+                0
+            );
+            // Empty endpoint list is invalid.
+            assert_eq!(
+                netstudio_warp_start_profile(empty.as_ptr(), 1, 300, key.as_ptr(), key.as_ptr()),
+                0
+            );
+            // Null CSV is invalid.
+            assert_eq!(
+                netstudio_warp_start_profile(std::ptr::null(), 1, 300, key.as_ptr(), key.as_ptr()),
+                0
+            );
+        }
+    }
 }

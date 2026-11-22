@@ -34,37 +34,53 @@ class ProcessTable extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: context.bgColor,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(12)),
               border: Border(bottom: BorderSide(color: context.borderColor)),
             ),
             child: Row(
               children: [
                 Expanded(
                   flex: 3,
-                  child: Text(strings.get('colProcess'), style: header(context.textMutedColor)),
+                  child: Text(strings.get('colProcess'),
+                      style: header(context.textMutedColor)),
                 ),
                 SizedBox(
                   width: 70,
-                  child: Text('PID', style: header(context.textMutedColor), textAlign: TextAlign.center),
+                  child: Text('PID',
+                      style: header(context.textMutedColor),
+                      textAlign: TextAlign.center),
                 ),
                 SizedBox(
                   width: 70,
-                  child: Text(strings.get('colProtocol'), style: header(context.textMutedColor), textAlign: TextAlign.center),
+                  child: Text(strings.get('colProtocol'),
+                      style: header(context.textMutedColor),
+                      textAlign: TextAlign.center),
                 ),
                 Expanded(
                   flex: 2,
-                  child: Text(strings.get('colDownload'), style: header(context.textMutedColor), textAlign: TextAlign.left),
+                  child: Text(strings.get('colDownload'),
+                      style: header(context.textMutedColor),
+                      textAlign: TextAlign.left),
                 ),
                 Expanded(
                   flex: 2,
-                  child: Text(strings.get('colUpload'), style: header(context.textMutedColor), textAlign: TextAlign.left),
+                  child: Text(strings.get('colUpload'),
+                      style: header(context.textMutedColor),
+                      textAlign: TextAlign.left),
                 ),
                 Expanded(
                   flex: 2,
-                  child: Text(strings.get('colTotal'), style: header(context.textMutedColor), textAlign: TextAlign.left),
+                  child: Text(strings.get('colTotal'),
+                      style: header(context.textMutedColor),
+                      textAlign: TextAlign.left),
                 ),
                 if (isEstimated)
-                  Text(strings.get('estimatedShort'), style: const TextStyle(color: AppColors.latencyModerate, fontSize: 10, fontWeight: FontWeight.bold)),
+                  Text(strings.get('estimatedShort'),
+                      style: const TextStyle(
+                          color: AppColors.latencyModerate,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -74,11 +90,13 @@ class ProcessTable extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.memory_rounded, size: 32, color: context.textMutedColor),
+                        Icon(Icons.memory_rounded,
+                            size: 32, color: context.textMutedColor),
                         const SizedBox(height: 8),
                         Text(
                           strings.get('emptyProcesses'),
-                          style: TextStyle(color: context.textMutedColor, fontSize: 12),
+                          style: TextStyle(
+                              color: context.textMutedColor, fontSize: 12),
                           textAlign: TextAlign.center,
                         ),
                       ],
@@ -86,7 +104,9 @@ class ProcessTable extends StatelessWidget {
                   )
                 : SingleChildScrollView(
                     child: Column(
-                      children: [for (final p in processes) _ProcessRow(proc: p)],
+                      children: [
+                        for (final p in processes) _ProcessRow(proc: p)
+                      ],
                     ),
                   ),
           ),
@@ -106,7 +126,8 @@ class _ProcessRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: context.borderColor, width: 0.5)),
+        border:
+            Border(bottom: BorderSide(color: context.borderColor, width: 0.5)),
       ),
       child: Row(
         children: [
@@ -114,7 +135,10 @@ class _ProcessRow extends StatelessWidget {
             flex: 3,
             child: Text(
               proc.name,
-              style: TextStyle(color: context.textPrimaryColor, fontSize: 11, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                  color: context.textPrimaryColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -125,14 +149,18 @@ class _ProcessRow extends StatelessWidget {
                 Clipboard.setData(ClipboardData(text: '${proc.pid}'));
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('PID ${proc.pid} ${strings.get('pidCopied')}'),
+                    content:
+                        Text('PID ${proc.pid} ${strings.get('pidCopied')}'),
                     duration: const Duration(seconds: 1),
-                                      ),
+                  ),
                 );
               },
               child: Text(
                 '${proc.pid}',
-                style: const TextStyle(color: AppColors.cyan, fontSize: 11, fontFamily: 'monospace'),
+                style: const TextStyle(
+                    color: AppColors.cyan,
+                    fontSize: 11,
+                    fontFamily: 'monospace'),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -144,11 +172,15 @@ class _ProcessRow extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.purple.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: AppColors.purple.withValues(alpha: 0.4)),
+                border:
+                    Border.all(color: AppColors.purple.withValues(alpha: 0.4)),
               ),
               child: Text(
                 proc.protocol,
-                style: const TextStyle(color: AppColors.purple, fontSize: 10, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                    color: AppColors.purple,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -157,21 +189,33 @@ class _ProcessRow extends StatelessWidget {
             flex: 2,
             child: Text(
               formatRate(proc.downBps),
-              style: const TextStyle(color: AppColors.latencyFast, fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                  color: AppColors.latencyFast,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w600),
             ),
           ),
           Expanded(
             flex: 2,
             child: Text(
               formatRate(proc.upBps),
-              style: const TextStyle(color: AppColors.primary, fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                  color: AppColors.primary,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w600),
             ),
           ),
           Expanded(
             flex: 2,
             child: Text(
               formatRate(proc.totalBps),
-              style: TextStyle(color: context.textPrimaryColor, fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.bold),
+              style: TextStyle(
+                  color: context.textPrimaryColor,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.bold),
             ),
           ),
         ],

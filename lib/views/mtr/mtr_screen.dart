@@ -101,25 +101,22 @@ class _MtrScreenState extends State<MtrScreen> {
                   ),
                 ],
               ),
-          const Spacer(),
-          // Re-trace: re-discovers the path on the same host so route
-          // changes are diffed against the previous baseline and stale
-          // hops are repointed. Also runs automatically every minute.
-          IconButton(
-            onPressed: isRunning ? c.retrace : null,
-            icon: const Icon(Icons.refresh_rounded, size: 20),
-            tooltip: strings.get('retrace'),
-            color: context.textSecondaryColor,
-          ),
-          const SizedBox(width: 4),
-          ElevatedButton.icon(
-                onPressed: isRunning
-                    ? c.stop
-                    : () => c.start(_hostController.text),
+              const Spacer(),
+              // Re-trace: re-discovers the path on the same host so route
+              // changes are diffed against the previous baseline and stale
+              // hops are repointed. Also runs automatically every minute.
+              IconButton(
+                onPressed: isRunning ? c.retrace : null,
+                icon: const Icon(Icons.refresh_rounded, size: 20),
+                tooltip: strings.get('retrace'),
+                color: context.textSecondaryColor,
+              ),
+              const SizedBox(width: 4),
+              ElevatedButton.icon(
+                onPressed:
+                    isRunning ? c.stop : () => c.start(_hostController.text),
                 icon: Icon(
-                    isRunning
-                        ? Icons.stop_rounded
-                        : Icons.play_arrow_rounded,
+                    isRunning ? Icons.stop_rounded : Icons.play_arrow_rounded,
                     size: 20),
                 label: Text(
                   isRunning ? strings.get('stop') : strings.get('start'),
@@ -127,12 +124,11 @@ class _MtrScreenState extends State<MtrScreen> {
                       fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: isRunning
-                      ? AppColors.latencyCritical
-                      : AppColors.primary,
+                  backgroundColor:
+                      isRunning ? AppColors.latencyCritical : AppColors.primary,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 14),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8)),
                 ),
@@ -221,8 +217,7 @@ class _MtrScreenState extends State<MtrScreen> {
           Expanded(
             child: Text(
               summary,
-              style: TextStyle(
-                  color: context.textSecondaryColor, fontSize: 11),
+              style: TextStyle(color: context.textSecondaryColor, fontSize: 11),
             ),
           ),
           TextButton(
@@ -241,8 +236,7 @@ class _MtrScreenState extends State<MtrScreen> {
     );
   }
 
-  Widget _phaseChip(
-      BuildContext context, AppStrings strings, MtrController c) {
+  Widget _phaseChip(BuildContext context, AppStrings strings, MtrController c) {
     final String label;
     final Color color;
     if (c.isDiscovering) {
@@ -264,8 +258,8 @@ class _MtrScreenState extends State<MtrScreen> {
       ),
       child: Text(
         label,
-        style: TextStyle(
-            color: color, fontSize: 11, fontWeight: FontWeight.bold),
+        style:
+            TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -282,19 +276,18 @@ class _MtrScreenState extends State<MtrScreen> {
       child: Column(
         children: [
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(
               color: context.bgColor,
-              borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(14)),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(14)),
             ),
             child: Row(
               children: [
                 SizedBox(
                     width: 44,
-                    child: Text(strings.get('colHop'),
-                        style: _header(context))),
+                    child:
+                        Text(strings.get('colHop'), style: _header(context))),
                 Expanded(
                     flex: 3,
                     child: Text(strings.get('colNodeIp'),
@@ -305,16 +298,15 @@ class _MtrScreenState extends State<MtrScreen> {
                         style: _header(context))),
                 Expanded(
                     flex: 2,
-                    child: Text(strings.get('avg'),
-                        style: _header(context))),
+                    child: Text(strings.get('avg'), style: _header(context))),
                 Expanded(
                     flex: 2,
-                    child: Text(strings.get('colBest'),
-                        style: _header(context))),
+                    child:
+                        Text(strings.get('colBest'), style: _header(context))),
                 Expanded(
                     flex: 2,
-                    child: Text(strings.get('colWorst'),
-                        style: _header(context))),
+                    child:
+                        Text(strings.get('colWorst'), style: _header(context))),
               ],
             ),
           ),
@@ -327,8 +319,7 @@ class _MtrScreenState extends State<MtrScreen> {
                       child: Text(
                         c.isDiscovering
                             ? strings.get('mtrDiscovering')
-                            : c.tracer.progress.error ??
-                                strings.get('mtrHint'),
+                            : c.tracer.progress.error ?? strings.get('mtrHint'),
                         style: TextStyle(
                             color: c.tracer.progress.error != null
                                 ? AppColors.latencyCritical
@@ -343,8 +334,8 @@ class _MtrScreenState extends State<MtrScreen> {
                         child: Column(
                           children: [
                             for (final h in hops)
-                              _hopRow(context, h,
-                                  c.hopMetrics[mtrHopId(h.hopNum)]),
+                              _hopRow(
+                                  context, h, c.hopMetrics[mtrHopId(h.hopNum)]),
                           ],
                         ),
                       )
@@ -354,8 +345,7 @@ class _MtrScreenState extends State<MtrScreen> {
                           child: Text(
                             strings.get('mtrNoRoute'),
                             style: TextStyle(
-                                color: context.textMutedColor,
-                                fontSize: 12),
+                                color: context.textMutedColor, fontSize: 12),
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -367,12 +357,9 @@ class _MtrScreenState extends State<MtrScreen> {
   }
 
   TextStyle _header(BuildContext context) => TextStyle(
-      color: context.textMutedColor,
-      fontSize: 11,
-      fontWeight: FontWeight.bold);
+      color: context.textMutedColor, fontSize: 11, fontWeight: FontWeight.bold);
 
-  Widget _hopRow(
-      BuildContext context, TracerouteHop hop, PingMetric? m) {
+  Widget _hopRow(BuildContext context, TracerouteHop hop, PingMetric? m) {
     final strings = AppStrings.of(context);
     final Color dot;
     final String loss;
@@ -395,8 +382,8 @@ class _MtrScreenState extends State<MtrScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       decoration: BoxDecoration(
-        border: Border(
-            bottom: BorderSide(color: context.borderColor, width: 0.5)),
+        border:
+            Border(bottom: BorderSide(color: context.borderColor, width: 0.5)),
       ),
       child: Row(
         children: [
@@ -407,8 +394,7 @@ class _MtrScreenState extends State<MtrScreen> {
                 Container(
                   width: 7,
                   height: 7,
-                  decoration:
-                      BoxDecoration(color: dot, shape: BoxShape.circle),
+                  decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
                 ),
                 const SizedBox(width: 6),
                 Text(
@@ -458,8 +444,8 @@ class _MtrScreenState extends State<MtrScreen> {
                     Clipboard.setData(ClipboardData(text: hop.ip));
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(
-                            '${hop.ip} ${strings.get('copiedSuffix')}'),
+                        content:
+                            Text('${hop.ip} ${strings.get('copiedSuffix')}'),
                         duration: const Duration(seconds: 1),
                       ),
                     );

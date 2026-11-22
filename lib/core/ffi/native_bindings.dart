@@ -1,4 +1,5 @@
 import 'dart:ffi';
+import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'native_library.dart';
 
@@ -101,6 +102,21 @@ typedef NetstudioWarpStartDart = int Function(
   int timeoutMs,
 );
 
+typedef NetstudioWarpStartProfileNative = Uint32 Function(
+  Pointer<Utf8> endpointsCsv,
+  Uint32 parallel,
+  Uint32 timeoutMs,
+  Pointer<Uint8> privateKey,
+  Pointer<Uint8> peerKey,
+);
+typedef NetstudioWarpStartProfileDart = int Function(
+  Pointer<Utf8> endpointsCsv,
+  int parallel,
+  int timeoutMs,
+  Pointer<Uint8> privateKey,
+  Pointer<Uint8> peerKey,
+);
+
 typedef NetstudioWarpPollSinceNative = Pointer<Utf8> Function(
     Uint32 sessionId, Uint32 sinceIndex);
 typedef NetstudioWarpPollSinceDart = Pointer<Utf8> Function(
@@ -140,6 +156,7 @@ class NativeBindings {
   NetstudioBandwidthIsRunningDart? _bandwidthIsRunning;
 
   NetstudioWarpStartDart? _warpStart;
+  NetstudioWarpStartProfileDart? _warpStartProfile;
   NetstudioWarpPollSinceDart? _warpPoll;
   NetstudioWarpStopDart? _warpStop;
   NetstudioWarpFreeDart? _warpFree;
@@ -226,6 +243,10 @@ class NativeBindings {
       try {
         _warpStart = lib.lookupFunction<NetstudioWarpStartNative,
             NetstudioWarpStartDart>('netstudio_warp_start');
+      } catch (_) {}
+      try {
+        _warpStartProfile = lib.lookupFunction<NetstudioWarpStartProfileNative,
+            NetstudioWarpStartProfileDart>('netstudio_warp_start_profile');
       } catch (_) {}
       try {
         _warpPoll = lib.lookupFunction<NetstudioWarpPollSinceNative,
@@ -414,29 +435,67 @@ class NativeBindings {
   bool get isWarpReady =>
       _lib != null && _warpStart != null && _warpPoll != null;
 
+  /// True when the loaded engine supports profile-signed handshakes.
+  bool get isWarpProfileReady =>
+      _lib != null && _warpStartProfile != null && _warpPoll != null;
+
   /// Max endpoints per scan to avoid multi-MB CSV / OOM in native code.
   static const int maxWarpEndpoints = 4096;
 
-  int startWarpScan(String endpointsCsv, int parallel, int timeoutMs) {
-    if (_warpStart == null) return 0;
-    if (endpointsCsv.isEmpty || endpointsCsv.length > 256 * 1024) return 0;
+  bool _validWarpCsv(String endpointsCsv) {
+    if (endpointsCsv.isEmpty || endpointsCsv.length > 256 * 1024) return false;
     final parts = endpointsCsv.split(',');
-    if (parts.length > maxWarpEndpoints) return 0;
+    if (parts.length > maxWarpEndpoints) return false;
     for (final p in parts) {
       final item = p.trim();
       if (item.isEmpty) continue;
       final idx = item.lastIndexOf(':');
-      if (idx <= 0) return 0;
+      if (idx <= 0) return false;
       final ip = item.substring(0, idx).trim();
       final port = int.tryParse(item.substring(idx + 1).trim());
-      if (!isValidHost(ip) || port == null || !isValidPort(port)) return 0;
+      if (!isValidHost(ip) || port == null || !isValidPort(port)) return false;
     }
+    return true;
+  }
+
+  int startWarpScan(String endpointsCsv, int parallel, int timeoutMs) {
+    if (_warpStart == null) return 0;
+    if (!_validWarpCsv(endpointsCsv)) return 0;
     final csvPtr = endpointsCsv.toNativeUtf8();
     try {
       return _warpStart!(
           csvPtr, parallel.clamp(1, 64), clampTimeout(timeoutMs));
     } finally {
       calloc.free(csvPtr);
+    }
+  }
+
+  /// Starts a scan whose handshake initiations are signed by the imported
+  /// WireGuard profile. Returns 0 when the engine does not support it (an
+  /// old DLL) — callers must NOT silently fall back to an ephemeral scan
+  /// and present it as profile-validated.
+  int startWarpProfileScan(
+    String endpointsCsv,
+    int parallel,
+    int timeoutMs,
+    Uint8List privateKey,
+    Uint8List peerKey,
+  ) {
+    if (_warpStartProfile == null) return 0;
+    if (privateKey.length != 32 || peerKey.length != 32) return 0;
+    if (!_validWarpCsv(endpointsCsv)) return 0;
+    final csvPtr = endpointsCsv.toNativeUtf8();
+    final privatePtr = calloc<Uint8>(32);
+    final peerPtr = calloc<Uint8>(32);
+    try {
+      privatePtr.asTypedList(32).setAll(0, privateKey);
+      peerPtr.asTypedList(32).setAll(0, peerKey);
+      return _warpStartProfile!(csvPtr, parallel.clamp(1, 64),
+          clampTimeout(timeoutMs), privatePtr, peerPtr);
+    } finally {
+      calloc.free(csvPtr);
+      calloc.free(privatePtr);
+      calloc.free(peerPtr);
     }
   }
 

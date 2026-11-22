@@ -56,8 +56,7 @@ const List<String> kMetricsCsvHeader = [
 String buildMetricsCsv(Map<int, PingMetric> metrics) {
   final buffer = StringBuffer();
   buffer.writeln(kMetricsCsvHeader.join(','));
-  final sorted = metrics.values.toList()
-    ..sort((a, b) => a.id.compareTo(b.id));
+  final sorted = metrics.values.toList()..sort((a, b) => a.id.compareTo(b.id));
   for (final m in sorted) {
     String num(double v) => v.toStringAsFixed(2);
     final row = [
@@ -95,7 +94,8 @@ Future<String> exportMetricsCsv(Map<int, PingMetric> metrics) async {
   String two(int n) => n.toString().padLeft(2, '0');
   final stamp =
       '${now.year}${two(now.month)}${two(now.day)}-${two(now.hour)}${two(now.minute)}${two(now.second)}';
-  final file = File('${dir.path}${Platform.pathSeparator}velocenet-metrics-$stamp.csv');
+  final file =
+      File('${dir.path}${Platform.pathSeparator}velocenet-metrics-$stamp.csv');
   await file.writeAsString(
     buildMetricsCsv(metrics),
     flush: true,

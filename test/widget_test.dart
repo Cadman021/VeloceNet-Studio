@@ -18,8 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// MissingPluginException — every plugin the app touches at startup needs
 /// a mock here (or a FLUTTER_TEST guard at the call site, like tray setup).
 void _mockSecureStorage() {
-  const channel =
-      MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+  const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(channel, (call) async => null);
 }

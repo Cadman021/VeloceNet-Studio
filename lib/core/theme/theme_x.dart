@@ -6,8 +6,7 @@ import 'package:material_ui/material_ui.dart';
 extension ThemeX on BuildContext {
   bool get isDark => Theme.of(this).brightness == Brightness.dark;
 
-  Color get surfaceColor =>
-      isDark ? const Color(0xFF111726) : Colors.white;
+  Color get surfaceColor => isDark ? const Color(0xFF111726) : Colors.white;
   Color get bgColor =>
       isDark ? const Color(0xFF090D16) : const Color(0xFFF1F5F9);
   Color get borderColor =>

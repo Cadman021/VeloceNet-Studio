@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/ffi/native_bindings.dart';
 import '../../models/ping_target.dart';
 import '../../models/warp_endpoint.dart';
+import '../../models/warp_profile.dart';
 import '../../models/warp_result.dart';
 import 'warp_socket.dart' as ws;
 
@@ -27,6 +28,22 @@ class WarpController extends ChangeNotifier {
   // into the new run's progress (same stale-write race class as fixed in
   // the traceroute/portscan/dns controllers).
   int _runId = 0;
+
+  // --- Imported WireGuard profile (session-only, never persisted) ---
+  WarpProfile? _profile;
+  String? _profileError;
+  bool _useProfileForScan = true;
+  bool _validatingProfile = false;
+  WarpProfileValidation? _profileValidation;
+  int _validationRunId = 0;
+  bool _disposed = false;
+
+  WarpProfile? get profile => _profile;
+  String? get profileError => _profileError;
+  bool get useProfileForScan => _useProfileForScan;
+  bool get isValidatingProfile => _validatingProfile;
+  WarpProfileValidation? get profileValidation => _profileValidation;
+  bool get profileSupported => _bindings.isWarpProfileReady;
 
   /// Actual probe path of the current/last run; falls back to mere
   /// availability before the first scan.
@@ -141,16 +158,24 @@ class WarpController extends ChangeNotifier {
     notifyListeners();
 
     if (_bindings.isWarpReady) {
-      _startNative(endpoints, runId);
+      final useProfile = _useProfileForScan &&
+          _profile != null &&
+          _bindings.isWarpProfileReady;
+      _startNative(endpoints, runId, useProfile: useProfile);
     } else {
       _startFallback(endpoints, runId);
     }
   }
 
-  void _startNative(List<String> endpoints, int runId) {
+  void _startNative(List<String> endpoints, int runId,
+      {bool useProfile = false}) {
     _isUsingNativeOverride = true;
     final csv = endpoints.join(',');
-    _activeSessionId = _bindings.startWarpScan(csv, parallel, timeoutMs);
+    final p = useProfile ? _profile : null;
+    _activeSessionId = p != null
+        ? _bindings.startWarpProfileScan(
+            csv, parallel, timeoutMs, p.privateKeyBytes, p.publicKeyBytes)
+        : _bindings.startWarpScan(csv, parallel, timeoutMs);
     if (_activeSessionId == 0) {
       _startFallback(endpoints, runId);
       return;
@@ -316,6 +341,198 @@ class WarpController extends ChangeNotifier {
     }
   }
 
+  /// Parses and installs a WireGuard profile from raw `.conf` text.
+  /// Returns true on success; [profileError] carries the reason otherwise.
+  bool setProfile(String raw) {
+    final parsed = WarpProfile.parse(raw);
+    final profile = parsed.profile;
+    if (profile == null) {
+      _profileError = parsed.error ?? 'Invalid profile.';
+      notifyListeners();
+      return false;
+    }
+    _profile = profile;
+    _profileError = null;
+    _profileValidation = null;
+    // Invalidate any in-flight validation for the previous profile so its
+    // result can never be attributed to this one.
+    _validationRunId++;
+    _validatingProfile = false;
+    notifyListeners();
+    return true;
+  }
+
+  void clearProfile() {
+    if (_profile == null && _profileError == null) return;
+    _profile = null;
+    _profileError = null;
+    _profileValidation = null;
+    _validationRunId++;
+    _validatingProfile = false;
+    notifyListeners();
+  }
+
+  void setUseProfileForScan(bool value) {
+    if (_useProfileForScan == value) return;
+    _useProfileForScan = value;
+    notifyListeners();
+  }
+
+  /// Proves the imported identity against the profile's own endpoint.
+  ///
+  /// Resolves the endpoint hostname in Dart (FFI takes IPs only), then asks
+  /// the engine for a handshake signed by the profile's private key. Only a
+  /// validated 92-byte response counts as confirmation; an open TCP port is
+  /// reported separately and must never be treated as profile acceptance.
+  Future<WarpProfileValidation> validateProfile() async {
+    final p = _profile;
+    if (p == null) {
+      return const WarpProfileValidation(
+        status: WarpProfileValidationStatus.failed,
+        endpoint: '',
+        detail: 'No profile loaded.',
+      );
+    }
+    if (!_bindings.isWarpProfileReady) {
+      final v = WarpProfileValidation(
+        status: WarpProfileValidationStatus.unsupported,
+        endpoint: p.displayEndpoint,
+        detail:
+            'The loaded native engine does not expose profile handshakes; rebuild netstudio_engine.',
+      );
+      _profileValidation = v;
+      notifyListeners();
+      return v;
+    }
+    if (_validatingProfile) {
+      return _profileValidation ??
+          WarpProfileValidation(
+            status: WarpProfileValidationStatus.failed,
+            endpoint: p.displayEndpoint,
+            detail: 'Validation already running.',
+          );
+    }
+
+    final runId = ++_validationRunId;
+    _validatingProfile = true;
+    _profileValidation = null;
+    notifyListeners();
+
+    int sessionId = 0;
+    WarpProfileValidation result;
+    try {
+      final addresses = await InternetAddress.lookup(p.endpointHost)
+          .timeout(const Duration(seconds: 6));
+      final seen = <String>{};
+      final ips = addresses.map((a) => a.address).where(seen.add).toList()
+        ..sort((a, b) {
+          final a6 = a.contains(':') ? 1 : 0;
+          final b6 = b.contains(':') ? 1 : 0;
+          return a6.compareTo(b6);
+        });
+      if (ips.isEmpty) {
+        result = WarpProfileValidation(
+          status: WarpProfileValidationStatus.failed,
+          endpoint: p.displayEndpoint,
+          detail: 'Endpoint hostname did not resolve.',
+        );
+      } else {
+        final csv = ips.take(4).map((ip) {
+          return ip.contains(':')
+              ? '[$ip]:${p.endpointPort}'
+              : '$ip:${p.endpointPort}';
+        }).join(',');
+        sessionId = _bindings.startWarpProfileScan(
+            csv, 4, 5000, p.privateKeyBytes, p.publicKeyBytes);
+        if (sessionId == 0) {
+          result = WarpProfileValidation(
+            status: WarpProfileValidationStatus.failed,
+            endpoint: p.displayEndpoint,
+            detail: 'The engine refused to start the validation probe.',
+          );
+        } else {
+          final results = <WarpResult>[];
+          for (int tick = 0; tick < 75; tick++) {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+            if (runId != _validationRunId) break;
+            final json = _bindings.pollWarpSince(sessionId, results.length);
+            if (json != null && json.isNotEmpty) {
+              try {
+                final map = jsonDecode(json) as Map<String, dynamic>;
+                final fresh = (map['newResults'] as List<dynamic>?)
+                        ?.map((e) =>
+                            WarpResult.fromJson(e as Map<String, dynamic>))
+                        .toList() ??
+                    const <WarpResult>[];
+                results.addAll(fresh);
+                if ((map['isCompleted'] as bool?) ?? false) break;
+              } catch (_) {}
+            }
+          }
+          result = _judgeProfileValidation(p, results);
+        }
+      }
+    } catch (e) {
+      result = WarpProfileValidation(
+        status: WarpProfileValidationStatus.failed,
+        endpoint: p.displayEndpoint,
+        detail: 'Validation failed: $e',
+      );
+    } finally {
+      if (sessionId != 0) {
+        try {
+          _bindings.freeWarp(sessionId);
+        } catch (_) {}
+      }
+      // Only the current run owns the busy flag: an invalidated (profile
+      // replaced/cleared) run must not clear a newer validation's spinner.
+      if (runId == _validationRunId) _validatingProfile = false;
+    }
+
+    if (runId == _validationRunId) {
+      _profileValidation = result;
+      if (!_disposed) notifyListeners();
+    }
+    return result;
+  }
+
+  WarpProfileValidation _judgeProfileValidation(
+      WarpProfile p, List<WarpResult> results) {
+    final confirmed = results.where((r) => r.success && r.handshake).toList()
+      ..sort((a, b) => a.rttMs.compareTo(b.rttMs));
+    if (confirmed.isNotEmpty) {
+      return WarpProfileValidation(
+        status: WarpProfileValidationStatus.confirmed,
+        endpoint: confirmed.first.endpoint,
+        rttMs: confirmed.first.rttMs,
+        detail: 'WireGuard handshake accepted the imported identity.',
+      );
+    }
+    final reachable = results.where((r) => r.success).toList()
+      ..sort((a, b) => a.rttMs.compareTo(b.rttMs));
+    if (reachable.isNotEmpty) {
+      return WarpProfileValidation(
+        status: WarpProfileValidationStatus.reachableOnly,
+        endpoint: reachable.first.endpoint,
+        rttMs: reachable.first.rttMs,
+        detail:
+            'Host reachable via TCP, but no WireGuard handshake reply arrived — identity not confirmed.',
+      );
+    }
+    final reason = results
+        .map((r) => r.note)
+        .whereType<String>()
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return WarpProfileValidation(
+      status: WarpProfileValidationStatus.failed,
+      endpoint: p.displayEndpoint,
+      detail: reason.isEmpty
+          ? 'No response from the profile endpoint.'
+          : reason.first,
+    );
+  }
+
   /// Builds PingTarget entries (TCP) for the top-N ranked endpoints so the
   /// user can monitor them in the Ping Matrix tab. Caller assigns IDs.
   List<PingTarget> buildPingTargets({int count = 5, int idStart = 1000}) {
@@ -346,6 +563,8 @@ class WarpController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _validationRunId++;
     stop(silent: true);
     super.dispose();
   }

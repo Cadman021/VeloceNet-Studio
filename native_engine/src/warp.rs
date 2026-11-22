@@ -15,7 +15,22 @@ pub struct WarpResult {
     pub endpoint: String,
     pub rtt_ms: f64,
     pub success: bool,
+    /// True only when a validated 92-byte WireGuard handshake response
+    /// arrived over UDP. TCP fallback successes are reachable hosts, not
+    /// cryptographic proof — profile validation must never accept them.
+    #[serde(default)]
+    pub handshake: bool,
     pub error: Option<String>,
+}
+
+/// A user's WireGuard identity for profile-backed probes.
+///
+/// `private_key` is borrowed from the parsed `.conf` (never persisted by
+/// the engine); `peer_key` is the profile's `[Peer] PublicKey`.
+#[derive(Debug, Clone, Copy)]
+pub struct WarpIdentity {
+    pub private_key: [u8; 32],
+    pub peer_key: [u8; 32],
 }
 
 /// Live progress of a running Warp scan session.
@@ -82,6 +97,17 @@ impl WarpManager {
     /// Start a scan over the given endpoints (already expanded ip:port list).
     /// `parallel` = worker thread count (clamped 1..64), `timeout_ms` per probe.
     pub fn start_scan(&self, endpoints: Vec<(String, u16)>, parallel: u32, timeout_ms: u32) -> u32 {
+        self.start_scan_with_identity(endpoints, parallel, timeout_ms, None)
+    }
+
+    /// Scan with an optional user WireGuard identity (profile validation).
+    pub fn start_scan_with_identity(
+        &self,
+        endpoints: Vec<(String, u16)>,
+        parallel: u32,
+        timeout_ms: u32,
+        identity: Option<WarpIdentity>,
+    ) -> u32 {
         // Same prune-then-cap policy as TracerouteManager: finished
         // sessions are reclaimed from both maps, refusal is the last resort.
         let finished: Vec<u32> = self
@@ -125,7 +151,14 @@ impl WarpManager {
             .insert(session_id, cancel_flag.clone());
 
         std::thread::spawn(move || {
-            run_scan_worker(endpoints, parallel, timeout_ms, progress, cancel_flag);
+            run_scan_worker(
+                endpoints,
+                parallel,
+                timeout_ms,
+                progress,
+                cancel_flag,
+                identity,
+            );
         });
 
         session_id
@@ -185,6 +218,7 @@ fn run_scan_worker(
     timeout_ms: u64,
     progress: Arc<RwLock<WarpProgress>>,
     cancel_flag: Arc<AtomicBool>,
+    identity: Option<WarpIdentity>,
 ) {
     use std::sync::mpsc::channel;
 
@@ -203,7 +237,7 @@ fn run_scan_worker(
             let job: Option<(usize, (String, u16))> = queue.write().pop();
             match job {
                 Some((idx, (ip, port))) => {
-                    let res = probe_warp_endpoint(&ip, port, timeout_ms);
+                    let res = probe_warp_endpoint(&ip, port, timeout_ms, identity);
                     let _ = tx.send((idx, res));
                 }
                 None => break,
@@ -264,12 +298,17 @@ fn run_scan_worker(
 ///     on the same port: open TCP = host reachable (routing OK), even if
 ///     the Warp UDP service itself is filtered. Closed/refused TCP is
 ///     still a signal (host up, port filtered).
-fn probe_warp_endpoint(ip: &str, port: u16, timeout_ms: u64) -> WarpResult {
+fn probe_warp_endpoint(
+    ip: &str,
+    port: u16,
+    timeout_ms: u64,
+    identity: Option<WarpIdentity>,
+) -> WarpResult {
     let endpoint = format!("{ip}:{port}");
     let timeout = Duration::from_millis(timeout_ms);
 
     // --- Step 1: UDP probe ---
-    let udp_outcome = udp_probe(ip, port, timeout);
+    let udp_outcome = udp_probe(ip, port, timeout, identity);
 
     match udp_outcome {
         UdpOutcome::Replied(rtt) => WarpResult {
@@ -278,6 +317,7 @@ fn probe_warp_endpoint(ip: &str, port: u16, timeout_ms: u64) -> WarpResult {
             endpoint,
             rtt_ms: rtt,
             success: true,
+            handshake: true,
             // Genuine WireGuard handshake completed (not the old "any
             // bytes back" heuristic) — the UI renders these distinctly.
             error: Some("WireGuard handshake".to_string()),
@@ -289,6 +329,7 @@ fn probe_warp_endpoint(ip: &str, port: u16, timeout_ms: u64) -> WarpResult {
             endpoint,
             rtt_ms: rtt,
             success: false,
+            handshake: false,
             error: Some("UDP port unreachable (host up)".to_string()),
         },
         UdpOutcome::Timeout => {
@@ -300,6 +341,7 @@ fn probe_warp_endpoint(ip: &str, port: u16, timeout_ms: u64) -> WarpResult {
                     endpoint,
                     rtt_ms: rtt,
                     success: true,
+                    handshake: false,
                     error: Some("via TCP fallback (UDP filtered)".to_string()),
                 },
                 None => WarpResult {
@@ -308,6 +350,7 @@ fn probe_warp_endpoint(ip: &str, port: u16, timeout_ms: u64) -> WarpResult {
                     endpoint,
                     rtt_ms: -1.0,
                     success: false,
+                    handshake: false,
                     error: Some("timeout (UDP silent, TCP closed)".to_string()),
                 },
             }
@@ -333,7 +376,7 @@ fn parse_target(ip: &str, port: u16) -> Option<SocketAddr> {
     Some(SocketAddr::new(parsed, port))
 }
 
-fn udp_probe(ip: &str, port: u16, timeout: Duration) -> UdpOutcome {
+fn udp_probe(ip: &str, port: u16, timeout: Duration, identity: Option<WarpIdentity>) -> UdpOutcome {
     let addr = match parse_target(ip, port) {
         Some(a) => a,
         None => return UdpOutcome::Timeout,
@@ -358,12 +401,20 @@ fn udp_probe(ip: &str, port: u16, timeout: Duration) -> UdpOutcome {
     // Genuine 148-byte WireGuard handshake initiation (see wireguard.rs).
     // Real peers answer with a 92-byte handshake response; anything else
     // (including the old 32-byte random blob approach, which servers drop
-    // silently) can never confirm a WireGuard endpoint.
-    let (packet, sender_index) =
-        match crate::wireguard::build_handshake_init(&crate::wireguard::DEFAULT_WARP_PEER_KEY) {
-            Some(v) => v,
-            None => return UdpOutcome::Timeout,
-        };
+    // silently) can never confirm a WireGuard endpoint. With a user profile
+    // the initiation is signed by their registered identity instead of an
+    // ephemeral one.
+    let handshake = match identity {
+        Some(identity) => crate::wireguard::build_handshake_init_with(
+            &identity.peer_key,
+            Some(identity.private_key),
+        ),
+        None => crate::wireguard::build_handshake_init(&crate::wireguard::DEFAULT_WARP_PEER_KEY),
+    };
+    let (packet, sender_index) = match handshake {
+        Some(v) => v,
+        None => return UdpOutcome::Timeout,
+    };
 
     let start = Instant::now();
     if sock.send_to(&packet, addr).is_err() {
@@ -436,5 +487,54 @@ mod tests {
         assert!(parse_target("2001:db8::1", 864).is_some());
         assert!(parse_target("not-an-ip", 443).is_none());
         assert!(parse_target("", 443).is_none());
+    }
+
+    #[test]
+    fn profile_identity_handshake_over_udp() {
+        use boringtun::noise::Tunn;
+        use boringtun::x25519::{PublicKey, StaticSecret};
+        use rand_core::OsRng;
+        use std::net::UdpSocket;
+
+        // Deterministic loopback WireGuard responder, no live network.
+        let server = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let port = server.local_addr().expect("addr").port();
+        server
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("timeout");
+
+        let responder_secret = StaticSecret::random_from_rng(OsRng);
+        let responder_pub = PublicKey::from(&responder_secret).to_bytes();
+        let initiator_secret = StaticSecret::random_from_rng(OsRng);
+        let initiator_priv = initiator_secret.to_bytes();
+        let initiator_pub = PublicKey::from(&initiator_secret);
+
+        let handle = std::thread::spawn(move || {
+            let mut responder = Tunn::new(responder_secret, initiator_pub, None, None, 0, None);
+            let mut buf = [0u8; 2048];
+            let (n, peer) = server.recv_from(&mut buf).expect("init arrives");
+            let mut out = [0u8; 2048];
+            match responder.decapsulate(None, &buf[..n], &mut out) {
+                boringtun::noise::TunnResult::WriteToNetwork(reply) => {
+                    server.send_to(reply, peer).expect("reply sends");
+                }
+                _ => panic!("responder did not answer"),
+            }
+        });
+
+        let result = probe_warp_endpoint(
+            "127.0.0.1",
+            port,
+            2000,
+            Some(WarpIdentity {
+                private_key: initiator_priv,
+                peer_key: responder_pub,
+            }),
+        );
+        handle.join().expect("responder joins");
+
+        assert!(result.success, "profile handshake must succeed");
+        assert!(result.handshake, "must be flagged as a real handshake");
+        assert_eq!(result.error.as_deref(), Some("WireGuard handshake"));
     }
 }

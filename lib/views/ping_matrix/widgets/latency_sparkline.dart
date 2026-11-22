@@ -133,7 +133,8 @@ class _SparklinePainter extends CustomPainter {
     );
 
     final fillPaint = Paint()
-      ..shader = fillGradient.createShader(Rect.fromLTWH(0, 0, size.width, size.height))
+      ..shader = fillGradient
+          .createShader(Rect.fromLTWH(0, 0, size.width, size.height))
       ..style = PaintingStyle.fill;
 
     canvas.drawPath(fillPath, fillPaint);
@@ -152,7 +153,8 @@ class _SparklinePainter extends CustomPainter {
     final lostDotPaint = Paint()..color = AppColors.latencyCritical;
     for (int i = 0; i < history.length; i++) {
       if (history[i] < 0) {
-        canvas.drawCircle(Offset(i * stepX, size.height - 3), 2.0, lostDotPaint);
+        canvas.drawCircle(
+            Offset(i * stepX, size.height - 3), 2.0, lostDotPaint);
       }
     }
   }

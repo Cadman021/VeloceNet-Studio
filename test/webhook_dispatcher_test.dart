@@ -228,8 +228,7 @@ void main() {
       log.dispose();
     });
 
-    test('ntfy and generic channels fire with their own body shapes',
-        () async {
+    test('ntfy and generic channels fire with their own body shapes', () async {
       final calls = <String>[];
       final log = AlertLog();
       final dispatcher = WebhookDispatcher(
@@ -241,7 +240,8 @@ void main() {
           genericUrl: 'https://example.com/hook',
         ),
         poster: (url, headers, body) async {
-          calls.add('${url.host}${url.path}|${body.contains('{') ? 'json' : 'text'}');
+          calls.add(
+              '${url.host}${url.path}|${body.contains('{') ? 'json' : 'text'}');
           return true;
         },
       );
@@ -298,7 +298,8 @@ void main() {
     });
 
     test('keeps an explicit http scheme (self-hosted on a LAN)', () {
-      expect(ntfyEndpoint(server: 'http://10.0.0.5:8080', topic: 't').toString(),
+      expect(
+          ntfyEndpoint(server: 'http://10.0.0.5:8080', topic: 't').toString(),
           'http://10.0.0.5:8080/t');
     });
 

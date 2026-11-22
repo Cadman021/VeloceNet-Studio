@@ -6,9 +6,11 @@ import '../../core/app_info.dart';
 import '../../core/i18n/app_strings.dart';
 import '../../core/settings/settings_controller.dart';
 import '../../services/webhook_dispatcher.dart';
+import '../../services/desktop_notifier.dart';
 import 'widgets/settings_about_section.dart';
 import 'widgets/settings_appearance_section.dart';
 import 'widgets/settings_language_section.dart';
+import 'widgets/settings_notifications_section.dart';
 import 'widgets/settings_webhooks_section.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -18,7 +20,16 @@ class SettingsScreen extends StatefulWidget {
   /// test-notification buttons; null in tests/previews.
   final WebhookDispatcher? webhooks;
 
-  const SettingsScreen({super.key, required this.settings, this.webhooks});
+  /// Live desktop notifier (owned by the shell), used only by the test
+  /// button; null in tests/previews.
+  final DesktopNotifier? desktopNotifier;
+
+  const SettingsScreen({
+    super.key,
+    required this.settings,
+    this.webhooks,
+    this.desktopNotifier,
+  });
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -48,11 +59,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _tgTokenController = TextEditingController(text: settings.telegramToken);
     _tgChatController = TextEditingController(text: settings.telegramChatId);
     _dcUrlController = TextEditingController(text: settings.discordUrl);
-    _ntfyServerController =
-        TextEditingController(text: settings.ntfyServer);
+    _ntfyServerController = TextEditingController(text: settings.ntfyServer);
     _ntfyTopicController = TextEditingController(text: settings.ntfyTopic);
-    _genericUrlController =
-        TextEditingController(text: settings.genericUrl);
+    _genericUrlController = TextEditingController(text: settings.genericUrl);
     _templateController = TextEditingController(text: settings.webhookTemplate);
     _proxyController = TextEditingController(text: settings.proxyAddress);
   }
@@ -142,6 +151,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SettingsAppearanceSection(settings: settings),
             const SizedBox(height: 16),
             SettingsLanguageSection(settings: settings),
+            const SizedBox(height: 16),
+            SettingsNotificationsSection(
+              settings: settings,
+              notifier: widget.desktopNotifier,
+            ),
             const SizedBox(height: 16),
             SettingsWebhooksSection(
               settings: settings,

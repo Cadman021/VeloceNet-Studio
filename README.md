@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.5.0](https://img.shields.io/badge/release-v1.5.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0)
+[![Release v1.6.0](https://img.shields.io/badge/release-v1.6.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -45,22 +45,22 @@ Live latency matrix (ICMP / TCP / HTTP(S) with TTFB), visual traceroute, bandwid
 
 ## Features
 
-- **Ping Matrix** — concurrent ICMP (Windows IP Helper; unprivileged ping sockets on Linux/macOS — no admin/root needed) + TCP-handshake + HTTP(S) probes (TTFB, status code, TLS certificate expiry), live sparklines, RTT avg/min/max, RFC 3550 jitter, loss %, status-change **alert log** with unread badge, one-click **CSV export**, versioned **JSON backup** (export + paste-to-import), per-target **24h uptime history** with outage report, and **group/tag organization** with one-tap filter facets.
+- **Ping Matrix** — concurrent ICMP (Windows IP Helper; unprivileged ping sockets on Linux/macOS — no admin/root needed) + TCP-handshake + HTTP(S) probes (TTFB, status code, TLS certificate expiry), live sparklines, RTT avg/min/max, RFC 3550 jitter, loss %, status-change **alert log** with unread badge, one-click **CSV export**, versioned **JSON backup** (export + paste-to-import), per-target **day / 7-day / 30-day uptime history** with window SLA, outage report and per-day drill-down, and **group/tag organization** with one-tap filter facets.
 - **Traceroute** — TTL-based visual hop chain + data table (native ICMP: Windows IP Helper incl. IPv6, Linux/macOS ping sockets), reverse-DNS hop names, averaged multi-sample RTT, stopped early on destination-unreachable.
 - **MTR** — trace once, then continuously ping every responding hop (loss/avg/best/worst per hop) on an isolated engine instance.
 - **Bandwidth** — per-interface live deltas via `GetIfTable2` (64-bit counters), top processes by connection share (explicitly labeled *estimated*).
-- **Warp Scanner** — WireGuard-style UDP probe + TCP fallback, ranking, copy-to-clipboard, one-click add to Ping Matrix.
+- **Warp Scanner** — WireGuard-style UDP probe + TCP fallback, ranking, copy-to-clipboard, one-click add to Ping Matrix; import a `.conf`/wgcf **WireGuard profile** to sign handshakes with your own identity and prove the endpoint accepts it (private key stays in memory, no tunnel is installed).
 - **Port Scanner** — TCP sweep with port-list specs (`80,443,8000-8010`), open/closed/filtered states, service guesses.
 - **DNS Lookup** — raw UDP client for A/AAAA/MX/TXT/NS/CNAME/SOA records against Cloudflare/Google/Quad9 or a custom server, with NXDOMAIN distinction and query-time display.
-- **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English), plus Telegram/Discord alert webhooks (DPAPI-protected secrets on Windows) with test buttons.
+- **Settings** — Light / Dark / System theme + English / فارسی / Русский / 中文 locale, persisted with `shared_preferences` (default: English), plus Telegram/Discord/ntfy/generic alert webhooks (DPAPI-protected secrets on Windows), **native desktop notifications** and test buttons.
 - **System tray** — close minimizes to the tray while monitoring continues; Show/Hide/Quit menu, toggleable in Settings.
 - **Update checker** — daily GitHub Releases poll with a startup prompt dialog (Download/Later, once per version) and manual check in Settings.
 - **Resilient engine** — if the Rust `.dll`/`.so` isn't built, the app automatically uses the Dart fallback prober so the UI stays usable.
 
-## Download (v1.5.0)
+## Download (v1.6.0)
 
 No build needed — pick your platform from the
-[v1.5.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0):
+[v1.6.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0):
 
 | Platform | File | Run |
 |---|---|---|
@@ -115,7 +115,7 @@ lib/
   core/theme/                    # app_colors.dart, app_theme.dart, theme_x.dart
   core/settings/                 # settings_controller.dart (theme+locale)
   core/i18n/                     # JSON-backed AppStrings (en/fa/ru/zh, default en)
-  models/ services/ state/       # incl. alert_log.dart (status-change history)
+  models/ services/ state/       # incl. alert_log.dart, desktop_notifier.dart, warp_profile.dart
   views/
     main_shell_view.dart         # sidebar + IndexedStack tabs
     ping_matrix/ traceroute/ bandwidth/ warp/ portscan/ dnslookup/ settings/
@@ -131,6 +131,8 @@ docs/screenshots/               # images used above
 - Warp scan input capped (256 KB / 4096 endpoints); IPv6 handled explicitly (bracketed `[::1]:port`).
 - Per-process bandwidth is a **connection-share estimate** (Windows exposes no per-PID byte counters without ETW) — the UI labels it as such.
 - Webhook secrets (Telegram token/chat ID, Discord URL) are DPAPI-protected on Windows and plaintext in the app preferences on Linux/macOS — a known, documented limitation, see [SECURITY.md](SECURITY.md).
+- Imported WireGuard profile private keys are held **in memory for the current session only**: never written to preferences/disk, never logged or shown in the UI, and never used to install a tunnel. Re-import after restarting the app.
+- Desktop notifications on Linux require `libnotify` (the release build links against it; the runtime library ships with normal desktop installs). On Windows, enabling notifications creates a Start-Menu shortcut so toast notifications get a valid AppUserModelID. On systems without a notification daemon the toggle reports "unavailable" instead of failing silently.
 - Linux tray needs an appindicator host (`libayatana-appindicator` on GNOME); without one the app keeps running normally but close-to-tray is disabled automatically.
 
 ## Contributing
@@ -143,8 +145,10 @@ flutter test --no-pub
 cd native_engine && cargo test --release && cargo clippy --release -- -D warnings
 ```
 
+Linux builds of the desktop-notification plugin require `libnotify-dev` (e.g. `sudo apt install libnotify-dev`).
+
 New UI strings must go through the JSON dictionaries in `assets/lang/` (all four locales — `test/i18n_parity_test.dart` enforces it); new colors through `ThemeX`. Bug reports and feature requests use the issue templates.
 
 ## Changelog & roadmap
 
-See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Prometheus export endpoint, real per-process accounting (ETW), desktop notifications for alerts.
+See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Prometheus export endpoint, real per-process accounting (ETW), headless/CLI daemon, Linux/macOS secret-store backends (libsecret/Keychain), additional network tools (speed test, DNS benchmark, TLS inspector).

@@ -9,6 +9,24 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Nothing yet — see `main` for work toward the next release.
 
+## [1.6.0] — 2026-11-22
+
+### Added
+- **Desktop notifications** (opt-in in Settings → Alerts): native OS notifications on every recorded status transition, independent of webhooks. Uses `local_notifier` (WinToast on Windows, libnotify on Linux, notification center on macOS) with a test button and graceful "unavailable" reporting. The Windows implementation creates a Start-Menu shortcut when notifications are enabled so toasts get a valid AppUserModelID; `libnotify-dev` was added to the Linux release build. Muted targets never notify (they emit no alert events).
+- **7/30-day uptime history**: retention grows from 7 to 30 local day files and the target history dialog gains Day / 7 days / 30 days views. Range mode shows one bar per day, window uptime (SLA) over observed minutes, total downtime, and an aggregated outage report with dates; clicking a day bar drills into that day's hourly view. Day navigation now follows the 30-day retention. Pure `summarizeDay`/`rangeSummaries` helpers are unit-tested, and missing days keep empty bar slots instead of shifting the layout.
+- **Warp profile validation** (`.conf` / `wgcf`): import a WireGuard profile from a file or paste it, then validate the endpoint with a handshake signed by the imported private key. New engine entry point `netstudio_warp_start_profile` (raw 32-byte Curve25519 keys) and `WarpIdentity`; scans can optionally be signed with the profile too. Validation distinguishes a genuine 92-byte WireGuard handshake response (identity confirmed) from a TCP-only reachability fallback (identity unconfirmed) and reports unsupported engines explicitly. Profile parsing is strict about 32-byte keys and endpoint shape (bracketed IPv6, default port 51820) and has a dedicated test suite. The private key is session-only: never persisted, logged, or rendered, and no tunnel is installed.
+- `WarpResult.handshake` (Rust + Dart): true only for a validated UDP handshake, so TCP fallback results can never be mistaken for profile acceptance. The engine also exposes it in incremental poll JSON.
+
+### Changed
+- Warp endpoint CSV parsing moved into one Rust helper shared by the legacy and profile scan entry points (same caps and IPv6 rules).
+- `file_selector` and `local_notifier` added as dependencies; generated Windows/Linux/macOS plugin registrants updated.
+
+### Fixed
+- Tray right-click menu: `tray_manager` 0.9's FFI `TrayIcon` defaults to no context-menu trigger, and its `Menu`/`MenuItem` wrappers are finalizable handles. The shell now sets `ContextMenuTrigger.rightClicked` explicitly and keeps the live menu/items referenced, so Show/Hide/Quit opens reliably (and the native menu is detached before teardown).
+
+### Security
+- Imported WireGuard private keys stay in memory for the current session only and are deliberately absent from `WarpProfile.toMap()`/`toString()`. Users re-import after restarting.
+
 ## [1.5.0] — 2026-10-18
 
 ### Added

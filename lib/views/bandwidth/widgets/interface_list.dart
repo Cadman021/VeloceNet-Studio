@@ -50,7 +50,8 @@ class InterfaceList extends StatelessWidget {
                       color: AppColors.cyan.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.lan_rounded, color: AppColors.cyan, size: 17),
+                    child: const Icon(Icons.lan_rounded,
+                        color: AppColors.cyan, size: 17),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -71,14 +72,21 @@ class InterfaceList extends StatelessWidget {
                           iface.speedBps > 0
                               ? '${strings.get('linkSpeed')} ${formatRate(iface.speedBps.toDouble())}'
                               : strings.get('linkUnknown'),
-                          style: TextStyle(color: context.textMutedColor, fontSize: 10),
+                          style: TextStyle(
+                              color: context.textMutedColor, fontSize: 10),
                         ),
                       ],
                     ),
                   ),
-                  _RateChip(label: '↓', value: formatRate(iface.downBps), color: AppColors.latencyFast),
+                  _RateChip(
+                      label: '↓',
+                      value: formatRate(iface.downBps),
+                      color: AppColors.latencyFast),
                   const SizedBox(width: 6),
-                  _RateChip(label: '↑', value: formatRate(iface.upBps), color: AppColors.primary),
+                  _RateChip(
+                      label: '↑',
+                      value: formatRate(iface.upBps),
+                      color: AppColors.primary),
                 ],
               ),
             ),
@@ -93,7 +101,8 @@ class _RateChip extends StatelessWidget {
   final String value;
   final Color color;
 
-  const _RateChip({required this.label, required this.value, required this.color});
+  const _RateChip(
+      {required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {

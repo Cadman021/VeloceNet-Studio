@@ -85,6 +85,53 @@ class OutageSpan {
   Duration get duration => end.difference(start);
 }
 
+/// One day's rollup for the 7/30-day range view.
+class DaySummary {
+  final DateTime day;
+  final int onlineMinutes;
+  final int dataMinutes;
+  final int worstBad;
+  final List<OutageSpan> outages;
+
+  const DaySummary({
+    required this.day,
+    required this.onlineMinutes,
+    required this.dataMinutes,
+    required this.worstBad,
+    required this.outages,
+  });
+
+  bool get hasData => dataMinutes > 0;
+
+  double get uptimePct =>
+      dataMinutes == 0 ? 0.0 : onlineMinutes / dataMinutes * 100.0;
+
+  Duration get downtime =>
+      outages.fold(Duration.zero, (sum, o) => sum + o.duration);
+}
+
+/// Summarizes one local day's minute buckets. Pure, unit tested.
+DaySummary summarizeDay(List<MinuteBucket> buckets, DateTime day) {
+  final localDay = DateTime(day.year, day.month, day.day);
+  int online = 0;
+  int worstBad = -1;
+  for (final b in buckets) {
+    if (b.worstStatus == TargetStatus.online.index) {
+      online++;
+    } else if (b.worstStatus == TargetStatus.degraded.index ||
+        b.worstStatus == TargetStatus.offline.index) {
+      if (b.worstStatus > worstBad) worstBad = b.worstStatus;
+    }
+  }
+  return DaySummary(
+    day: localDay,
+    onlineMinutes: online,
+    dataMinutes: buckets.length,
+    worstBad: worstBad,
+    outages: findOutages(buckets),
+  );
+}
+
 /// Finds non-online spans in a minute-ordered bucket list. Pure, tested.
 ///
 /// Data gaps (app was closed: no buckets at all) SPLIT spans — the minutes
@@ -142,7 +189,8 @@ List<OutageSpan> findOutages(
 
 /// Persists per-minute rollups as append-only JSONL logs, one per LOCAL day:
 /// `<support>/VeloceNet-Studio/history/YYYY-MM-DD.jsonl`, each line
-/// `{id, t, avg, loss, s}`. Retention is 7 days, pruned on init.
+/// `{id, t, avg, loss, s}`. Retention is 30 days (the 7/30-day range view
+/// and the per-day navigator share the same store), pruned on init.
 ///
 /// Why append-only: the previous version rewrote the whole day's map on
 /// every minute rollover (O(n) encode + delete + rename per minute). At the
@@ -153,7 +201,7 @@ List<OutageSpan> findOutages(
 /// Legacy `<day>.json` map files are still read (and never rewritten), so
 /// upgrading users keep their history.
 class UptimeHistoryService {
-  static const int retentionDays = 7;
+  static const int retentionDays = 30;
 
   final Future<Directory> Function()? _directoryProvider;
   Directory? _dir;
@@ -359,6 +407,27 @@ class UptimeHistoryService {
     final list = List<MinuteBucket>.from(table[targetId] ?? const []);
     list.sort((a, b) => a.minute.compareTo(b.minute));
     return list;
+  }
+
+  /// Daily summaries for the last [days] local days ending at [endDay]
+  /// (today by default), oldest first. Missing days yield empty summaries
+  /// with [DaySummary.hasData] false instead of being omitted, so the range
+  /// view keeps a stable 7/30-bar layout.
+  Future<List<DaySummary>> rangeSummaries(
+    int targetId, {
+    int days = 7,
+    DateTime? endDay,
+  }) async {
+    if (!_ready) return const [];
+    final end = endDay ?? DateTime.now();
+    final endLocal = DateTime(end.year, end.month, end.day);
+    final out = <DaySummary>[];
+    for (int i = days - 1; i >= 0; i--) {
+      final day = endLocal.subtract(Duration(days: i));
+      final buckets = await bucketsFor(targetId, day);
+      out.add(summarizeDay(buckets, day));
+    }
+    return out;
   }
 
   Future<void> _pruneOld() async {

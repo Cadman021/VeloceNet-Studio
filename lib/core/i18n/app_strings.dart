@@ -31,8 +31,7 @@ class AppStrings {
       try {
         final raw = await b.loadString('assets/lang/$code.json');
         final decoded = jsonDecode(raw) as Map<String, dynamic>;
-        _tables[code] =
-            decoded.map((k, v) => MapEntry(k, v.toString()));
+        _tables[code] = decoded.map((k, v) => MapEntry(k, v.toString()));
       } catch (_) {
         _tables[code] = {};
       }
@@ -57,9 +56,7 @@ class AppStrings {
   bool get isRtl => isFa;
 
   String get(String key) =>
-      _tables[locale.languageCode]?[key] ??
-      _tables['en']?[key] ??
-      key;
+      _tables[locale.languageCode]?[key] ?? _tables['en']?[key] ?? key;
 
   static AppStrings of(BuildContext context) {
     final locale = Localizations.localeOf(context);

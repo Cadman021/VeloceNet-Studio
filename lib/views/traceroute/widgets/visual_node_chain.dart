@@ -35,7 +35,8 @@ class VisualNodeChain extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.alt_route_rounded, size: 38, color: AppColors.primary),
+            const Icon(Icons.alt_route_rounded,
+                size: 38, color: AppColors.primary),
             const SizedBox(height: 12),
             Text(
               strings.get('visualReady'),
@@ -83,8 +84,7 @@ class VisualNodeChain extends StatelessWidget {
             _buildConnectionLine(hops[i]),
             _buildHopNode(context, hops[i]),
           ],
-          if (isRunning &&
-              (hops.isEmpty || !hops.last.reachedDestination)) ...[
+          if (isRunning && (hops.isEmpty || !hops.last.reachedDestination)) ...[
             _buildSearchingLine(),
             _buildSearchingNode(context),
           ],
@@ -107,7 +107,8 @@ class VisualNodeChain extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.computer_rounded, color: AppColors.primary, size: 22),
+            const Icon(Icons.computer_rounded,
+                color: AppColors.primary, size: 22),
             const SizedBox(height: 6),
             Text(
               'Local Host',
@@ -156,8 +157,7 @@ class VisualNodeChain extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                 decoration: BoxDecoration(
                   color: nodeColor.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(4),
@@ -193,7 +193,9 @@ class VisualNodeChain extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            hop.isTimeout ? 'Time Out (*)' : '${hop.rttMs.toStringAsFixed(1)} ms',
+            hop.isTimeout
+                ? 'Time Out (*)'
+                : '${hop.rttMs.toStringAsFixed(1)} ms',
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.bold,

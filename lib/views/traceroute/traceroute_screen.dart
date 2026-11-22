@@ -84,8 +84,7 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                         decoration: BoxDecoration(
                           color: context.surfaceColor,
                           borderRadius: BorderRadius.circular(14),
-                          border:
-                              Border.all(color: context.borderColor),
+                          border: Border.all(color: context.borderColor),
                         ),
                         child: Row(
                           children: [
@@ -107,8 +106,8 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                                 decoration: BoxDecoration(
                                   color: context.bgColor,
                                   borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                      color: context.borderColor),
+                                  border:
+                                      Border.all(color: context.borderColor),
                                 ),
                                 child: Directionality(
                                   textDirection: TextDirection.ltr,
@@ -128,8 +127,9 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                                       prefixIcon: Icon(Icons.public,
                                           size: 18,
                                           color: context.textMutedColor),
-                                      contentPadding: const EdgeInsets.symmetric(
-                                          vertical: 11),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              vertical: 11),
                                     ),
                                     onSubmitted: (_) => isRunning
                                         ? _stopTraceroute()
@@ -154,8 +154,7 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                                     ? strings.get('stopTraceroute')
                                     : strings.get('startTraceroute'),
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13),
+                                    fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: isRunning
@@ -165,8 +164,7 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 20, vertical: 14),
                                 shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(8)),
+                                    borderRadius: BorderRadius.circular(8)),
                               ),
                             ),
                           ],
@@ -190,26 +188,21 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                             const SizedBox(width: 8),
                             for (final p in _presets)
                               Padding(
-                                padding:
-                                    const EdgeInsets.only(left: 6),
+                                padding: const EdgeInsets.only(left: 6),
                                 child: InkWell(
                                   onTap: () {
-                                    _hostController.text =
-                                        p['host']!;
+                                    _hostController.text = p['host']!;
                                     _startTraceroute();
                                   },
-                                  borderRadius:
-                                      BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(16),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 10, vertical: 5),
                                     decoration: BoxDecoration(
                                       color: context.surfaceColor,
-                                      borderRadius:
-                                          BorderRadius.circular(16),
+                                      borderRadius: BorderRadius.circular(16),
                                       border: Border.all(
-                                          color:
-                                              context.borderColor),
+                                          color: context.borderColor),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
@@ -217,8 +210,7 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                                         Text(
                                           p['name']!,
                                           style: TextStyle(
-                                              color:
-                                                  context.textPrimaryColor,
+                                              color: context.textPrimaryColor,
                                               fontSize: 11),
                                         ),
                                         const SizedBox(width: 4),
@@ -241,8 +233,7 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                       const SizedBox(height: 12),
 
                       // Stats summary
-                      TracerouteStatsBar(
-                          controller: _controller),
+                      TracerouteStatsBar(controller: _controller),
                       const SizedBox(height: 12),
 
                       // Visual node diagram: bounded height + its OWN
@@ -254,19 +245,15 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                         height: diagramHeight,
                         decoration: BoxDecoration(
                           color: context.surfaceColor,
-                          borderRadius:
-                              BorderRadius.circular(14),
-                          border: Border.all(
-                              color: context.borderColor),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: context.borderColor),
                         ),
                         clipBehavior: Clip.antiAlias,
                         child: VisualNodeChain(
                           hops: hops,
                           isRunning: isRunning,
-                          targetHost:
-                              _controller.progress.targetHost,
-                          targetIp:
-                              _controller.progress.targetIp,
+                          targetHost: _controller.progress.targetHost,
+                          targetIp: _controller.progress.targetIp,
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -274,10 +261,9 @@ class _TracerouteScreenState extends State<TracerouteScreen> {
                       // Table: bounded height (min 280) with its own
                       // internal scroll. Never unbounded, never overflows.
                       SizedBox(
-                        height: (constraints.maxHeight * 0.5)
-                            .clamp(280.0, 560.0),
-                        child: HopDataTable(
-                            hops: hops, isRunning: isRunning),
+                        height:
+                            (constraints.maxHeight * 0.5).clamp(280.0, 560.0),
+                        child: HopDataTable(hops: hops, isRunning: isRunning),
                       ),
                       const SizedBox(height: 8),
                     ],

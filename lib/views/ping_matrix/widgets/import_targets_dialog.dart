@@ -70,7 +70,7 @@ class _ImportTargetsDialogState extends State<ImportTargetsDialog> {
             ),
           ],
         ),
-                duration: const Duration(seconds: 4),
+        duration: const Duration(seconds: 4),
       ),
     );
   }
@@ -134,8 +134,8 @@ class _ImportTargetsDialogState extends State<ImportTargetsDialog> {
                 ),
                 decoration: InputDecoration(
                   hintText: strings.get('importHint'),
-                  hintStyle: TextStyle(
-                      color: context.textMutedColor, fontSize: 12),
+                  hintStyle:
+                      TextStyle(color: context.textMutedColor, fontSize: 12),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.all(12),
                 ),

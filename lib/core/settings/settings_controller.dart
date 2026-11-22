@@ -34,6 +34,7 @@ class SettingsController extends ChangeNotifier {
   static const _kProxyEnabled = 'settings.proxyEnabled';
   static const _kProxy = 'settings.proxy';
   static const _kTray = 'settings.tray';
+  static const _kDesktopNotifications = 'settings.desktopNotifications';
   static const _kAutostart = 'settings.autostart';
   static const _kAlertOfflineAfter = 'settings.alertOfflineAfter';
   static const _kAlertRecoverAfter = 'settings.alertRecoverAfter';
@@ -80,6 +81,10 @@ class SettingsController extends ChangeNotifier {
   // Minimize to the system tray on window close instead of quitting.
   // Monitoring keeps running in the background; Quit lives in the tray menu.
   bool trayEnabled = true;
+  // Native OS notification on every status transition (independent of the
+  // webhook channels below). Off by default: Windows needs a Start-Menu
+  // shortcut for toast delivery, so enabling is an explicit choice.
+  bool desktopNotificationsEnabled = false;
 
   // Launch at login. The OS entry is the source of truth at load time;
   // the persisted flag only records the user's intent so a transient
@@ -170,8 +175,10 @@ class SettingsController extends ChangeNotifier {
       proxyEnabled = prefs.getBool(_kProxyEnabled) ?? false;
       proxyAddress = prefs.getString(_kProxy) ?? '';
       trayEnabled = prefs.getBool(_kTray) ?? true;
-      autostartEnabled = (prefs.getBool(_kAutostart) ?? false) &&
-          await _autostart.isEnabled();
+      desktopNotificationsEnabled =
+          prefs.getBool(_kDesktopNotifications) ?? false;
+      autostartEnabled =
+          (prefs.getBool(_kAutostart) ?? false) && await _autostart.isEnabled();
       alertOfflineAfter = (prefs.getInt(_kAlertOfflineAfter) ?? 3).clamp(1, 20);
       alertRecoverAfter = (prefs.getInt(_kAlertRecoverAfter) ?? 2).clamp(1, 20);
       updateCheckEnabled = prefs.getBool(_kUpdateAuto) ?? true;
@@ -275,8 +282,7 @@ class SettingsController extends ChangeNotifier {
     await _saveWebhookPrefs();
   }
 
-  Future<void> setNtfy(
-      {bool? enabled, String? server, String? topic}) async {
+  Future<void> setNtfy({bool? enabled, String? server, String? topic}) async {
     if (enabled != null) ntfyEnabled = enabled;
     if (server != null) ntfyServer = server;
     if (topic != null) ntfyTopic = topic;
@@ -327,6 +333,15 @@ class SettingsController extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_kTray, trayEnabled);
+    } catch (_) {}
+  }
+
+  Future<void> setDesktopNotificationsEnabled(bool value) async {
+    desktopNotificationsEnabled = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kDesktopNotifications, value);
     } catch (_) {}
   }
 

@@ -10,6 +10,7 @@ import 'package:flutter_localizations/flutter_localizations.dart'
 import 'core/i18n/app_strings.dart';
 import 'core/settings/settings_controller.dart';
 import 'core/theme/app_theme.dart';
+import 'services/desktop_notifier.dart';
 import 'views/main_shell_view.dart';
 
 Future<void> main() async {
@@ -19,6 +20,12 @@ Future<void> main() async {
   await AppStrings.ensureLoaded();
   final settings = SettingsController();
   await settings.load();
+  // Native notification setup is best-effort and only runs when the user
+  // opted in (Windows creates a Start-Menu shortcut for toast delivery);
+  // Settings/tests can still initialize it on demand.
+  if (settings.desktopNotificationsEnabled) {
+    await DesktopNotificationSupport.initialize();
+  }
   runApp(NetStudioApp(settings: settings));
 }
 

@@ -34,12 +34,32 @@ const HANDSHAKE_RESPONSE_LEN: usize = 92;
 /// Exact on-wire size of a handshake initiation packet.
 const HANDSHAKE_INIT_LEN: usize = 148;
 
-/// Builds a genuine 148-byte handshake initiation for `peer_key`.
+/// Builds a genuine 148-byte handshake initiation for `peer_key` using a
+/// fresh ephemeral identity.
+///
 /// Returns the packet plus our sender index (to match the response
 /// against — parsed back out of the packet, never assumed from API
-/// internals). Each call uses a fresh ephemeral identity.
+/// internals).
 pub fn build_handshake_init(peer_key: &[u8; 32]) -> Option<(Vec<u8>, u32)> {
-    let secret = StaticSecret::random_from_rng(OsRng);
+    build_handshake_init_with(peer_key, None)
+}
+
+/// Same as [build_handshake_init], but optionally uses a caller-supplied
+/// private key instead of a fresh ephemeral one.
+///
+/// A real WireGuard peer silently drops handshakes from an identity it has
+/// not registered. Supplying the user's own profile key is what turns the
+/// scan from "is this IP a WireGuard listener" into "does this endpoint
+/// accept *my* Warp profile" — the only way to validate a profile against
+/// a live server.
+pub fn build_handshake_init_with(
+    peer_key: &[u8; 32],
+    private_key: Option<[u8; 32]>,
+) -> Option<(Vec<u8>, u32)> {
+    let secret = match private_key {
+        Some(key) => StaticSecret::from(key),
+        None => StaticSecret::random_from_rng(OsRng),
+    };
     let peer = PublicKey::from(*peer_key);
     let mut tunn = Tunn::new(secret, peer, None, None, 0, None);
     let mut dst = vec![0u8; 2048];
@@ -211,5 +231,31 @@ mod tests {
         assert!(!is_handshake_response(&bad, sender.wrapping_add(1)));
         assert!(!is_handshake_response(&bad[..60], sender));
         assert!(!is_handshake_response(&init_packet, sender));
+    }
+
+    #[test]
+    fn test_profile_identity_handshake() {
+        // A user-supplied private key must produce an initiation the peer
+        // accepts — this is what profile validation depends on.
+        let responder_secret = StaticSecret::random_from_rng(OsRng);
+        let responder_pub = PublicKey::from(&responder_secret).to_bytes();
+
+        let profile_secret = StaticSecret::random_from_rng(OsRng);
+        let profile_pub = PublicKey::from(&profile_secret);
+        let profile_priv_bytes = profile_secret.to_bytes();
+        let mut responder = Tunn::new(responder_secret, profile_pub, None, None, 0, None);
+
+        let (init_packet, sender) =
+            build_handshake_init_with(&responder_pub, Some(profile_priv_bytes))
+                .expect("profile init builds");
+        assert_eq!(init_packet.len(), HANDSHAKE_INIT_LEN);
+
+        let mut reply_buf = vec![0u8; 2048];
+        match responder.decapsulate(None, &init_packet, &mut reply_buf) {
+            TunnResult::WriteToNetwork(reply) => {
+                assert!(is_handshake_response(reply, sender));
+            }
+            _ => panic!("responder did not answer the profile initiation"),
+        }
     }
 }

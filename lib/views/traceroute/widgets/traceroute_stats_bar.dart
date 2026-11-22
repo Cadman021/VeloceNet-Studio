@@ -33,13 +33,21 @@ class TracerouteStatsBar extends StatelessWidget {
             title: strings.get('routeStatus'),
             value: reached
                 ? strings.get('connected')
-                : (controller.isRunning ? strings.get('tracing') : (totalHops > 0 ? strings.get('completed') : strings.get('ready'))),
+                : (controller.isRunning
+                    ? strings.get('tracing')
+                    : (totalHops > 0
+                        ? strings.get('completed')
+                        : strings.get('ready'))),
             icon: reached
                 ? Icons.check_circle_rounded
-                : (controller.isRunning ? Icons.sync_rounded : Icons.info_outline_rounded),
+                : (controller.isRunning
+                    ? Icons.sync_rounded
+                    : Icons.info_outline_rounded),
             color: reached
                 ? AppColors.latencyFast
-                : (controller.isRunning ? AppColors.cyan : context.textSecondaryColor),
+                : (controller.isRunning
+                    ? AppColors.cyan
+                    : context.textSecondaryColor),
           ),
           const SizedBox(width: 8),
 
@@ -47,7 +55,8 @@ class TracerouteStatsBar extends StatelessWidget {
           _buildStatCard(
             context,
             title: strings.get('hopCount'),
-            value: totalHops > 0 ? '$totalHops ${strings.get('hopsUnit')}' : '-',
+            value:
+                totalHops > 0 ? '$totalHops ${strings.get('hopsUnit')}' : '-',
             icon: Icons.linear_scale_rounded,
             color: AppColors.primary,
           ),
@@ -61,7 +70,9 @@ class TracerouteStatsBar extends StatelessWidget {
             icon: Icons.timer_rounded,
             color: avgRtt < 50
                 ? AppColors.latencyFast
-                : (avgRtt < 130 ? AppColors.latencyModerate : AppColors.latencyCritical),
+                : (avgRtt < 130
+                    ? AppColors.latencyModerate
+                    : AppColors.latencyCritical),
           ),
           const SizedBox(width: 8),
 
@@ -81,9 +92,12 @@ class TracerouteStatsBar extends StatelessWidget {
           _buildStatCard(
             context,
             title: strings.get('timeoutHops'),
-            value: totalHops > 0 ? '$timeouts ${strings.get('nodesUnit')}' : '-',
+            value:
+                totalHops > 0 ? '$timeouts ${strings.get('nodesUnit')}' : '-',
             icon: Icons.warning_amber_rounded,
-            color: timeouts > 0 ? AppColors.latencyCritical : AppColors.latencyFast,
+            color: timeouts > 0
+                ? AppColors.latencyCritical
+                : AppColors.latencyFast,
           ),
         ],
       ),
@@ -137,7 +151,9 @@ class TracerouteStatsBar extends StatelessWidget {
                       color: context.textPrimaryColor,
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
-                      fontFamily: value.contains('.') && !value.contains(' ') ? 'monospace' : null,
+                      fontFamily: value.contains('.') && !value.contains(' ')
+                          ? 'monospace'
+                          : null,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),

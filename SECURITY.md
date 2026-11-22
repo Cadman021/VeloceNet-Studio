@@ -47,6 +47,21 @@ Discord webhook URL) so alerts keep working across restarts:
   a working exploit that exfiltrates secrets *without* local user-level
   access is in scope.
 
+### Imported WireGuard profiles
+
+A WireGuard profile (`.conf` / `wgcf`) imported on the Warp screen contains a
+private key. Deliberate handling:
+
+- Kept **in memory for the current app session only** — never written to
+  `shared_preferences`, the history directory, logs, crash output, or the UI.
+- Passed as raw 32-byte key material across FFI solely to sign one handshake
+  probe, then dropped with the controller/session. There is no persistence to
+  protect with DPAPI/libsecret yet.
+- Never used to configure a tunnel, routes, or DNS; the app only sends a
+  single UDP handshake initiation from an ephemeral socket.
+- `WarpProfile.toString()`/`toMap()` intentionally omit the private key, and
+  parse errors never echo the supplied key back.
+
 ## Scope Notes
 
 This project ships a native networking engine. Reports most valuable to us:

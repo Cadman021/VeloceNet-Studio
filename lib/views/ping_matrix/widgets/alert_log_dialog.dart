@@ -106,8 +106,8 @@ class AlertLogDialog extends StatelessWidget {
                   return ListView.separated(
                     shrinkWrap: true,
                     itemCount: log.events.length,
-                    separatorBuilder: (_, __) => Divider(
-                        color: context.borderColor, height: 1),
+                    separatorBuilder: (_, __) =>
+                        Divider(color: context.borderColor, height: 1),
                     itemBuilder: (context, i) =>
                         _row(context, strings, log.events[i]),
                   );

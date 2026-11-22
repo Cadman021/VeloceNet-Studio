@@ -4,6 +4,7 @@ import 'warp_controller.dart';
 import 'widgets/warp_config_card.dart';
 import 'widgets/warp_header_card.dart';
 import 'widgets/warp_progress_card.dart';
+import 'widgets/warp_profile_card.dart';
 import 'widgets/warp_results_card.dart';
 
 class WarpScreen extends StatefulWidget {
@@ -68,6 +69,8 @@ class _WarpScreenState extends State<WarpScreen> {
                   timeoutController: _timeoutController,
                   onApply: _applyNumeric,
                 ),
+                const SizedBox(height: 12),
+                WarpProfileCard(controller: c),
                 const SizedBox(height: 12),
                 WarpProgressCard(progress: prog),
                 const SizedBox(height: 12),

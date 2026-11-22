@@ -21,11 +21,9 @@ void main() {
     test('daily throttle', () {
       final now = DateTime.utc(2026, 10, 10, 12);
       expect(shouldAutoCheck(null, now), isTrue);
-      expect(
-          shouldAutoCheck(now.subtract(const Duration(hours: 23)), now),
+      expect(shouldAutoCheck(now.subtract(const Duration(hours: 23)), now),
           isFalse);
-      expect(
-          shouldAutoCheck(now.subtract(const Duration(hours: 25)), now),
+      expect(shouldAutoCheck(now.subtract(const Duration(hours: 25)), now),
           isTrue);
     });
   });
@@ -33,8 +31,7 @@ void main() {
   group('fetchLatestRelease', () {
     test('parses tag, url and notes', () async {
       final client = MockClient((request) async {
-        expect(request.headers['Accept'],
-            'application/vnd.github+json');
+        expect(request.headers['Accept'], 'application/vnd.github+json');
         return http.Response(
           '{"tag_name": "v1.4.0", '
           '"html_url": "https://github.com/x/y/releases/tag/v1.4.0", '
@@ -54,9 +51,9 @@ void main() {
         expect(
           await fetchLatestRelease(
             client: MockClient((_) async => http.Response(
-              '{"tag_name": "$tag", "html_url": "https://x/y"}',
-              200,
-            )),
+                  '{"tag_name": "$tag", "html_url": "https://x/y"}',
+                  200,
+                )),
           ),
           isNull,
           reason: tag,

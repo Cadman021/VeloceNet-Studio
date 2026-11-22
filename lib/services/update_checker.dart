@@ -74,12 +74,10 @@ Future<UpdateInfo?> fetchLatestRelease({
         (owned = proxyDirective != null
             ? clientFor(proxyDirective: proxyDirective)
             : http.Client());
-    final resp = await c
-        .get(
-          Uri.parse(kReleasesLatestApi),
-          headers: {'Accept': 'application/vnd.github+json'},
-        )
-        .timeout(timeout);
+    final resp = await c.get(
+      Uri.parse(kReleasesLatestApi),
+      headers: {'Accept': 'application/vnd.github+json'},
+    ).timeout(timeout);
     if (resp.statusCode != 200) return null;
     final decoded = jsonDecode(resp.body);
     if (decoded is! Map<String, dynamic>) return null;

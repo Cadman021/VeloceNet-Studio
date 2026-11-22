@@ -57,7 +57,8 @@ void main() {
       expect(diff.deltas.firstWhere((d) => d.hopNum == 2).kind, 'removed');
     });
 
-    test('both-timeout hops are not a route change (rate limiting, not '
+    test(
+        'both-timeout hops are not a route change (rate limiting, not '
         'a path change)', () {
       final diff = RouteDiff.between(
         [_hop(1, '10.0.0.1'), _hop(2, '*', timeout: true)],

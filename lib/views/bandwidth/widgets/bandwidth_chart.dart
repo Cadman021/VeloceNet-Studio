@@ -21,7 +21,8 @@ class BandwidthChart extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.show_chart_rounded, size: 36, color: context.textMutedColor),
+              Icon(Icons.show_chart_rounded,
+                  size: 36, color: context.textMutedColor),
               const SizedBox(height: 8),
               Text(
                 strings.get('chartEmpty'),
@@ -38,9 +39,11 @@ class BandwidthChart extends StatelessWidget {
         // Legend
         Row(
           children: [
-            _LegendDot(color: AppColors.latencyFast, label: strings.get('legendDown')),
+            _LegendDot(
+                color: AppColors.latencyFast, label: strings.get('legendDown')),
             const SizedBox(width: 16),
-            _LegendDot(color: AppColors.primary, label: strings.get('legendUp')),
+            _LegendDot(
+                color: AppColors.primary, label: strings.get('legendUp')),
           ],
         ),
         const SizedBox(height: 8),
@@ -71,7 +74,9 @@ class _LegendDot extends StatelessWidget {
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 6),
-        Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+        Text(label,
+            style:
+                const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
       ],
     );
   }
@@ -95,7 +100,8 @@ class _BandwidthPainter extends CustomPainter {
 
     final stepX = size.width / (history.length - 1);
 
-    void drawSeries(List<double> Function(BandwidthSnapshot) pick, Color color) {
+    void drawSeries(
+        List<double> Function(BandwidthSnapshot) pick, Color color) {
       final path = Path();
       final fill = Path();
       for (int i = 0; i < history.length; i++) {
@@ -118,7 +124,10 @@ class _BandwidthPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [color.withValues(alpha: 0.30), color.withValues(alpha: 0.02)],
+          colors: [
+            color.withValues(alpha: 0.30),
+            color.withValues(alpha: 0.02)
+          ],
         ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
         ..style = PaintingStyle.fill;
       canvas.drawPath(fill, fillPaint);
@@ -140,7 +149,8 @@ class _BandwidthPainter extends CustomPainter {
     final peak = TextPainter(
       text: TextSpan(
         text: 'peak ${formatRate(maxVal / 1.15)}',
-        style: const TextStyle(color: AppColors.textMuted, fontSize: 10, fontFamily: 'monospace'),
+        style: const TextStyle(
+            color: AppColors.textMuted, fontSize: 10, fontFamily: 'monospace'),
       ),
       textDirection: TextDirection.ltr,
     )..layout();

@@ -18,7 +18,8 @@ class BandwidthScreen extends StatefulWidget {
 
 class _BandwidthScreenState extends State<BandwidthScreen> {
   late final BandwidthController _controller;
-  final TextEditingController _windowController = TextEditingController(text: '1');
+  final TextEditingController _windowController =
+      TextEditingController(text: '1');
 
   @override
   void initState() {
@@ -41,7 +42,7 @@ class _BandwidthScreenState extends State<BandwidthScreen> {
         SnackBar(
           content: Text(strings.get('enterValidNumber')),
           duration: const Duration(seconds: 2),
-                  ),
+        ),
       );
       return;
     }
@@ -195,7 +196,8 @@ class _BandwidthScreenState extends State<BandwidthScreen> {
               color: AppColors.cyan.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(Icons.speed_rounded, color: AppColors.cyan, size: 22),
+            child: const Icon(Icons.speed_rounded,
+                color: AppColors.cyan, size: 22),
           ),
           const SizedBox(width: 12),
           Column(
@@ -260,15 +262,20 @@ class _BandwidthScreenState extends State<BandwidthScreen> {
                   onTap: _applyWindow,
                   borderRadius: BorderRadius.circular(6),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                     decoration: BoxDecoration(
                       color: AppColors.primary.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: AppColors.primary.withValues(alpha: 0.4)),
+                      border: Border.all(
+                          color: AppColors.primary.withValues(alpha: 0.4)),
                     ),
                     child: Text(
                       strings.get('apply'),
-                      style: const TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          color: AppColors.primary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
@@ -291,15 +298,21 @@ class _BandwidthScreenState extends State<BandwidthScreen> {
                   width: 7,
                   height: 7,
                   decoration: BoxDecoration(
-                    color: isNative ? AppColors.latencyFast : AppColors.latencyModerate,
+                    color: isNative
+                        ? AppColors.latencyFast
+                        : AppColors.latencyModerate,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  isNative ? strings.get('nativeRust') : strings.get('coreUnavailable'),
+                  isNative
+                      ? strings.get('nativeRust')
+                      : strings.get('coreUnavailable'),
                   style: TextStyle(
-                    color: isNative ? AppColors.latencyFast : AppColors.latencyModerate,
+                    color: isNative
+                        ? AppColors.latencyFast
+                        : AppColors.latencyModerate,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
@@ -316,14 +329,18 @@ class _BandwidthScreenState extends State<BandwidthScreen> {
               size: 20,
             ),
             label: Text(
-              isRunning ? strings.get('stopMonitoring') : strings.get('startMonitoring'),
+              isRunning
+                  ? strings.get('stopMonitoring')
+                  : strings.get('startMonitoring'),
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: isRunning ? AppColors.latencyCritical : AppColors.primary,
+              backgroundColor:
+                  isRunning ? AppColors.latencyCritical : AppColors.primary,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
             ),
           ),
         ],

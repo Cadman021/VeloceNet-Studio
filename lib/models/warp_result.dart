@@ -4,6 +4,11 @@ class WarpResult {
   final String endpoint;
   final double rttMs;
   final bool success;
+
+  /// True only for a validated WireGuard handshake response over UDP.
+  /// TCP fallback successes prove reachability, not identity/profile
+  /// acceptance — profile validation must never treat them as confirmed.
+  final bool handshake;
   final String? note;
 
   const WarpResult({
@@ -12,6 +17,7 @@ class WarpResult {
     required this.endpoint,
     required this.rttMs,
     required this.success,
+    this.handshake = false,
     this.note,
   });
 
@@ -22,6 +28,7 @@ class WarpResult {
       endpoint: json['endpoint'] as String? ?? '',
       rttMs: (json['rttMs'] as num?)?.toDouble() ?? -1.0,
       success: json['success'] as bool? ?? false,
+      handshake: json['handshake'] as bool? ?? false,
       note: json['error'] as String?,
     );
   }

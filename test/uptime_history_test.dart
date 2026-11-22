@@ -252,5 +252,82 @@ void main() {
       await svc.init();
       expect(await old.exists(), isFalse);
     });
+
+    test('retains 30 days for the 7/30-day range view', () {
+      expect(UptimeHistoryService.retentionDays, 30);
+    });
+  });
+
+  group('summarizeDay', () {
+    test('counts uptime, worst bad status and outage spans', () {
+      final day = DateTime(2026, 9, 30);
+      final start =
+          day.add(const Duration(hours: 12)).millisecondsSinceEpoch ~/ 60000;
+      final buckets = [
+        for (int i = 0; i < 2; i++)
+          MinuteBucket(
+              minute: start + i,
+              avgRttMs: 10,
+              lossPct: 0,
+              worstStatus: TargetStatus.online.index),
+        MinuteBucket(
+            minute: start + 2,
+            avgRttMs: 200,
+            lossPct: 0,
+            worstStatus: TargetStatus.degraded.index),
+        MinuteBucket(
+            minute: start + 3,
+            avgRttMs: 0,
+            lossPct: 100,
+            worstStatus: TargetStatus.offline.index),
+      ];
+      final s = summarizeDay(buckets, day);
+      expect(s.day, day);
+      expect(s.onlineMinutes, 2);
+      expect(s.dataMinutes, 4);
+      expect(s.uptimePct, 50.0);
+      expect(s.worstBad, TargetStatus.offline.index);
+      expect(s.outages, hasLength(1));
+      expect(s.downtime, const Duration(minutes: 2));
+    });
+
+    test('empty day keeps a bar slot with no data', () {
+      final s = summarizeDay(const [], DateTime(2026, 9, 30));
+      expect(s.hasData, isFalse);
+      expect(s.uptimePct, 0.0);
+      expect(s.downtime, Duration.zero);
+    });
+  });
+
+  group('rangeSummaries', () {
+    test('returns every requested day oldest-first, including gaps', () async {
+      final dir = await _tempDir();
+      final svc = UptimeHistoryService(directoryProvider: () async => dir);
+      await svc.init();
+
+      final late = DateTime(2026, 9, 28, 23, 59);
+      final early = DateTime(2026, 9, 29, 0, 1);
+      await svc.recordFrame({
+        1: _metric(1, TargetStatus.offline, -1, sent: 1, received: 0),
+      }, now: late);
+      await svc.recordFrame({
+        1: _metric(1, TargetStatus.online, 10.0, sent: 2, received: 2),
+      }, now: early);
+      await svc.flush();
+
+      final range =
+          await svc.rangeSummaries(1, days: 3, endDay: DateTime(2026, 9, 29));
+      expect(range, hasLength(3));
+      expect(range[0].day, DateTime(2026, 9, 27));
+      expect(range[0].hasData, isFalse);
+      expect(range[1].day, DateTime(2026, 9, 28));
+      expect(range[1].onlineMinutes, 0);
+      expect(range[1].dataMinutes, 1);
+      expect(range[1].worstBad, TargetStatus.offline.index);
+      expect(range[2].day, DateTime(2026, 9, 29));
+      expect(range[2].onlineMinutes, 1);
+      expect(range[2].dataMinutes, 1);
+      expect(range[2].uptimePct, 100.0);
+    });
   });
 }

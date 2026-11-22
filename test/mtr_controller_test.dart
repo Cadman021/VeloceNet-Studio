@@ -33,8 +33,7 @@ void main() {
 
     test('empty and all-timeout traces yield no targets', () {
       expect(MtrController.buildHopTargets([]), isEmpty);
-      expect(
-          MtrController.buildHopTargets([_hop(1, '*', timeout: true)]),
+      expect(MtrController.buildHopTargets([_hop(1, '*', timeout: true)]),
           isEmpty);
     });
 

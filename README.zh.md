@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.5.0](https://img.shields.io/badge/release-v1.5.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0)
+[![Release v1.6.0](https://img.shields.io/badge/release-v1.6.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -45,22 +45,22 @@
 
 ## 功能
 
-- **Ping 矩阵** — 并发 ICMP (经由 Windows IP Helper，无需管理员权限) + TCP 握手探测、实时火花线、RTT 平均/最小/最大、RFC 3550 抖动、丢包率、状态变化**告警日志** (未读角标)、一键 **CSV 导出**、版本化 **JSON 备份** (导出 + 粘贴导入)，以及每个目标的 **24 小时在线历史**与中断报告。
+- **Ping 矩阵** — 并发 ICMP (经由 Windows IP Helper，无需管理员权限) + TCP 握手探测、实时火花线、RTT 平均/最小/最大、RFC 3550 抖动、丢包率、状态变化**告警日志** (未读角标)、一键 **CSV 导出**、版本化 **JSON 备份** (导出 + 粘贴导入)，以及每个目标的 **按日 / 7 天 / 30 天在线历史**、窗口 SLA、中断报告与按日下钻。
 - **路由追踪** — 基于 TTL 的可视化跳数链 + 数据表 (Windows 原生 ICMP)、IPv4/IPv6 解析、多样本 RTT 平均。
 - **MTR** — 追踪一次，然后在隔离的引擎实例上持续 ping 每个有响应的跳 (每跳 loss/avg/best/worst)。
 - **带宽** — 经由 `GetIfTable2` 的各网卡实时增量 (64 位计数器)，按连接占比列出最耗流量的进程 (明确标注为*估算*)。
-- **Warp 扫描器** — WireGuard 风格 UDP 探测 + TCP 回退、排名、一键复制、一键添加到 Ping 矩阵。
+- **Warp 扫描器** — WireGuard 风格 UDP 探测 + TCP 回退、排名、一键复制、一键添加到 Ping 矩阵；导入 **WireGuard 配置** (`.conf`/wgcf) 可用你自己的身份签名握手，并证明端点接受该身份 (私钥仅存于内存，不会建立隧道)。
 - **端口扫描器** — 按端口列表扫描 (`80,443,8000-8010`)，开放/关闭/已过滤三种状态、服务推测。
 - **DNS 查询** — 原始 UDP 客户端，支持 A/AAAA/MX/TXT/NS/CNAME/SOA，可使用 Cloudflare/Google/Quad9 或自定义服务器，区分 NXDOMAIN 并显示查询耗时。
-- **设置** — 浅色 / 深色 / 跟随系统主题 + 英语 / 波斯语 / 俄语 / 中文语言，通过 `shared_preferences` 持久化 (默认英语)，以及带测试按钮的 Telegram/Discord 告警 Webhook。
+- **设置** — 浅色 / 深色 / 跟随系统主题 + 英语 / 波斯语 / 俄语 / 中文语言，通过 `shared_preferences` 持久化 (默认英语)，以及带测试按钮的 Telegram/Discord/ntfy/通用告警 Webhook，和带测试按钮的**系统原生桌面通知**。
 - **系统托盘** — 关闭窗口时最小化到托盘，监控继续运行；显示/隐藏/退出菜单，可在设置中关闭。
 - **更新检查** — 每日轮询 GitHub Releases，启动时弹窗提示 (下载/稍后，每个版本仅一次)，设置中可手动检查。
 - **弹性引擎** — 如果 Rust 的 `.dll`/`.so` 尚未构建，程序会自动使用 Dart 备用探测器，保证界面始终可用。
 
-## 下载 (v1.5.0)
+## 下载 (v1.6.0)
 
 无需构建 — 从
-[v1.5.0 发布页](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0)选择你的平台：
+[v1.6.0 发布页](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)选择你的平台：
 
 | 平台 | 文件 | 运行 |
 |---|---|---|
@@ -130,6 +130,8 @@ docs/screenshots/               # 上文用到的图片
 - 不从 cwd/`PATH` 探测 DLL；缺少引擎 → Dart 备用探测器 (永不崩溃)。
 - Warp 扫描输入有上限 (256 KB / 4096 个端点)；IPv6 显式处理 (方括号形式 `[::1]:port`)。
 - 各进程带宽是**按连接占比估算**的 (没有 ETW 的 Windows 不提供 per-PID 字节计数器) — 界面中已如实标注。
+- 导入的 WireGuard 配置私钥**仅保存在本次会话内存中**：不写入设置/磁盘、不记录日志、不在界面显示，也不会建立隧道。重启后需重新导入。
+- Linux 桌面通知依赖 `libnotify`；Windows 在启用通知时会创建开始菜单快捷方式，以便系统 toast 获得有效的 AppUserModelID。没有通知服务时，开关会明确显示“不可用”，不会静默失败。
 
 ## 参与贡献
 
@@ -141,8 +143,10 @@ flutter test --no-pub
 cd native_engine && cargo test --release && cargo clippy --release -- -D warnings
 ```
 
+Linux 构建桌面通知插件需要 `libnotify-dev`（例如 `sudo apt install libnotify-dev`）。
+
 新增界面字符串必须走 `assets/lang/` 下的 JSON 词典 (四个语言 — `test/i18n_parity_test.dart` 会强制检查)；新增颜色走 `ThemeX`。Bug 与功能请求请使用 issue 模板。
 
 ## 更新日志与路线图
 
-见 [CHANGELOG.md](CHANGELOG.md)。近期想法：Linux/macOS 原生 ICMP、Prometheus 导出端点、真实的 per-process 统计 (ETW)、桌面告警通知。
+见 [CHANGELOG.md](CHANGELOG.md)。近期想法：Prometheus 导出端点、真实的 per-process 统计 (ETW)、headless/CLI 守护进程、Linux/macOS 安全密钥存储 (libsecret/Keychain)，以及更多网络工具 (测速、DNS 基准、TLS 检查器)。

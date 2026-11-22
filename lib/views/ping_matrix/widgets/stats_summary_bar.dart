@@ -41,7 +41,8 @@ class StatsSummaryBar extends StatelessWidget {
               // Title & Native engine indicator
               Row(
                 children: [
-                  const Icon(Icons.analytics_outlined, color: AppColors.cyan, size: 22),
+                  const Icon(Icons.analytics_outlined,
+                      color: AppColors.cyan, size: 22),
                   const SizedBox(width: 8),
                   Text(
                     strings.get('liveLatencyMatrix'),
@@ -53,7 +54,8 @@ class StatsSummaryBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: isNative
                           ? AppColors.latencyFast.withValues(alpha: 0.15)
@@ -70,15 +72,21 @@ class StatsSummaryBar extends StatelessWidget {
                         Icon(
                           isNative ? Icons.flash_on : Icons.speed,
                           size: 13,
-                          color: isNative ? AppColors.latencyFast : AppColors.latencyModerate,
+                          color: isNative
+                              ? AppColors.latencyFast
+                              : AppColors.latencyModerate,
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          isNative ? strings.get('rustFfi') : strings.get('dartFallbackMode'),
+                          isNative
+                              ? strings.get('rustFfi')
+                              : strings.get('dartFallbackMode'),
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: isNative ? AppColors.latencyFast : AppColors.latencyModerate,
+                            color: isNative
+                                ? AppColors.latencyFast
+                                : AppColors.latencyModerate,
                           ),
                         ),
                       ],
@@ -93,19 +101,27 @@ class StatsSummaryBar extends StatelessWidget {
                   OutlinedButton.icon(
                     onPressed: controller.toggleMonitoring,
                     icon: Icon(
-                      controller.isMonitoring ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      controller.isMonitoring
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
                       size: 18,
                     ),
-                    label: Text(controller.isMonitoring ? strings.get('stop') : strings.get('start')),
+                    label: Text(controller.isMonitoring
+                        ? strings.get('stop')
+                        : strings.get('start')),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: controller.isMonitoring ? AppColors.latencyModerate : AppColors.latencyFast,
+                      foregroundColor: controller.isMonitoring
+                          ? AppColors.latencyModerate
+                          : AppColors.latencyFast,
                       side: BorderSide(
                         color: controller.isMonitoring
                             ? AppColors.latencyModerate.withValues(alpha: 0.5)
                             : AppColors.latencyFast.withValues(alpha: 0.5),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -119,8 +135,8 @@ class StatsSummaryBar extends StatelessWidget {
                           IconButton(
                             onPressed: () => AlertLogDialog.show(
                                 context, controller.alertLog),
-                            icon: const Icon(
-                                Icons.notifications_outlined, size: 20),
+                            icon: const Icon(Icons.notifications_outlined,
+                                size: 20),
                             tooltip: strings.get('alerts'),
                             color: context.textSecondaryColor,
                           ),
@@ -133,8 +149,8 @@ class StatsSummaryBar extends StatelessWidget {
                                     horizontal: 5, vertical: 1),
                                 decoration: BoxDecoration(
                                   color: unread > 0 &&
-                                          controller.alertLog.events
-                                                  .isNotEmpty &&
+                                          controller
+                                              .alertLog.events.isNotEmpty &&
                                           controller.alertLog.events.first
                                                   .severity ==
                                               AlertSeverity.critical
@@ -227,8 +243,10 @@ class StatsSummaryBar extends StatelessWidget {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
                       elevation: 0,
                     ),
                   ),
@@ -245,10 +263,30 @@ class StatsSummaryBar extends StatelessWidget {
             runSpacing: 12,
             alignment: WrapAlignment.spaceBetween,
             children: [
-              _buildStatItem(context, strings.get('totalServers'), '${controller.totalTargets}', context.textPrimaryColor, Icons.dns),
-              _buildStatItem(context, strings.get('onlineHealthy'), '${controller.onlineCount}', AppColors.latencyFast, Icons.check_circle_outline),
-              _buildStatItem(context, strings.get('slowDegraded'), '${controller.degradedCount}', AppColors.latencyModerate, Icons.warning_amber_rounded),
-              _buildStatItem(context, strings.get('downOffline'), '${controller.offlineCount}', AppColors.latencyCritical, Icons.error_outline),
+              _buildStatItem(
+                  context,
+                  strings.get('totalServers'),
+                  '${controller.totalTargets}',
+                  context.textPrimaryColor,
+                  Icons.dns),
+              _buildStatItem(
+                  context,
+                  strings.get('onlineHealthy'),
+                  '${controller.onlineCount}',
+                  AppColors.latencyFast,
+                  Icons.check_circle_outline),
+              _buildStatItem(
+                  context,
+                  strings.get('slowDegraded'),
+                  '${controller.degradedCount}',
+                  AppColors.latencyModerate,
+                  Icons.warning_amber_rounded),
+              _buildStatItem(
+                  context,
+                  strings.get('downOffline'),
+                  '${controller.offlineCount}',
+                  AppColors.latencyCritical,
+                  Icons.error_outline),
               _buildStatItem(
                 context,
                 strings.get('avgLatency'),
@@ -267,7 +305,9 @@ class StatsSummaryBar extends StatelessWidget {
                 context,
                 strings.get('totalLoss'),
                 '${controller.overallPacketLoss.toStringAsFixed(2)}%',
-                controller.overallPacketLoss > 2 ? AppColors.latencyCritical : AppColors.latencyFast,
+                controller.overallPacketLoss > 2
+                    ? AppColors.latencyCritical
+                    : AppColors.latencyFast,
                 Icons.difference_outlined,
               ),
             ],
@@ -277,7 +317,8 @@ class StatsSummaryBar extends StatelessWidget {
     );
   }
 
-  Widget _buildStatItem(BuildContext context, String label, String value, Color color, IconData icon) {
+  Widget _buildStatItem(BuildContext context, String label, String value,
+      Color color, IconData icon) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -368,7 +409,7 @@ class _ExportFileButtonState extends State<_ExportFileButton> {
               ),
             ],
           ),
-                    duration: const Duration(seconds: 4),
+          duration: const Duration(seconds: 4),
           action: SnackBarAction(
             label: strings.get('copyPath'),
             onPressed: () {
@@ -390,7 +431,7 @@ class _ExportFileButtonState extends State<_ExportFileButton> {
               Expanded(child: Text(strings.get('exportFailed'))),
             ],
           ),
-                  ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _exporting = false);
@@ -443,7 +484,7 @@ Future<void> _exportTargetsFile(
             ),
           ],
         ),
-                duration: const Duration(seconds: 4),
+        duration: const Duration(seconds: 4),
         action: SnackBarAction(
           label: strings.get('copyPath'),
           onPressed: () {
@@ -458,7 +499,7 @@ Future<void> _exportTargetsFile(
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(strings.get('exportFailed')),
-              ),
+      ),
     );
   }
 }
