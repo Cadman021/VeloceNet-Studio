@@ -26,7 +26,7 @@ dependencies:
   # NOTE: flutter_secure_storage was dropped: its Windows backend needs
   # ATL headers (atlstr.h) absent from default VS installs, breaking
   # `flutter run`. Secrets use DPAPI-via-FFI instead (see secret_store.dart).
-  tray_manager: ^0.8.0
+  tray_manager: ^0.9.0
   window_manager: ^0.5.2
 
 dev_dependencies:
