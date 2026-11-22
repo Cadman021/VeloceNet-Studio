@@ -1,5 +1,14 @@
 name: CI
 
+# Pin the SDK instead of tracking `channel: stable`. `flutter analyze` fails on
+# info-level findings, and deprecations are infos, so an unpinned runner turns
+# every PR red the day stable starts deprecating an API the tree still uses
+# (Flutter 3.50 deprecates `package:flutter/material.dart` in favour of
+# `package:material_ui/material_ui.dart`). Bump this together with the
+# material_ui migration, not on its own.
+env:
+  FLUTTER_VERSION: "3.47.0"
+
 on:
   push:
     branches: [main]
@@ -14,7 +23,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install dependencies
         run: flutter pub get
@@ -33,7 +42,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install Linux build deps
         run: |
