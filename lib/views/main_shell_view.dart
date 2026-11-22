@@ -1,8 +1,16 @@
+// window_manager 0.6.0 moved the 0.5.x API (`windowManager`, `WindowListener`)
+// to `package:window_manager/legacy.dart`, the bridge it ships for existing
+// apps, and marked every member of it `@Deprecated`. The tray code below still
+// uses that bridge; the lint is silenced file-wide because `flutter analyze`
+// treats infos as errors and CI would fail on every call site. Porting the tray
+// logic to the native `Window`/`WindowManager` API removes the need for this.
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:window_manager/legacy.dart';
 import '../core/i18n/app_strings.dart';
 import '../core/theme/theme_x.dart';
 import '../core/settings/settings_controller.dart';
