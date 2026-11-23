@@ -61,6 +61,7 @@
   "portTcp": "端口 (用于 TCP)",
   "httpPath": "HTTP 路径",
   "intervalMs": "间隔 (毫秒)",
+  "timeoutMs": "超时 (毫秒)",
   "cancel": "取消",
   "addToMatrix": "添加到矩阵",
   "visualTraceroute": "可视化路由追踪",

@@ -9,6 +9,9 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 - Nothing yet — see `main` for work toward the next release.
 
+### Fixed
+- The Add Server dialog now exposes the per-target timeout next to the interval field, with `100–10000` ms validation matching `NativeBindings.clampTimeout`; the dialog title also ellipsizes instead of overflowing on narrow or localized layouts ([#2](https://github.com/Cadman021/VeloceNet-Studio/issues/2)).
+
 ## [1.6.0] — 2026-11-22
 
 ### Added

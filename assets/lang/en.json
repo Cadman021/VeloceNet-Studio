@@ -61,6 +61,7 @@
   "portTcp": "Port (for TCP)",
   "httpPath": "HTTP path",
   "intervalMs": "Interval (ms)",
+  "timeoutMs": "Timeout (ms)",
   "cancel": "Cancel",
   "addToMatrix": "Add to matrix",
   "visualTraceroute": "Visual Traceroute",

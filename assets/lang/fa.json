@@ -61,6 +61,7 @@
   "portTcp": "پورت (برای TCP)",
   "httpPath": "مسیر HTTP",
   "intervalMs": "بازه (میلی‌ثانیه)",
+  "timeoutMs": "تایم‌اوت (ms)",
   "cancel": "انصراف",
   "addToMatrix": "افزودن به ماتریس",
   "visualTraceroute": "رهگیری مسیر (Visual Traceroute)",

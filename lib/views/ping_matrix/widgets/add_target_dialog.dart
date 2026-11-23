@@ -128,15 +128,19 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
                       color: AppColors.primary,
                       size: 22),
                   const SizedBox(width: 8),
-                  Text(
-                    strings.get(_isEditing ? 'editServer' : 'addServerTitle'),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: context.textPrimaryColor,
+                  Expanded(
+                    child: Text(
+                      strings.get(_isEditing ? 'editServer' : 'addServerTitle'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: context.textPrimaryColor,
+                      ),
                     ),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 8),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: Icon(Icons.close,
@@ -222,7 +226,7 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
               Row(
                 children: [
                   Expanded(
-                    flex: 4,
+                    flex: 3,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -279,7 +283,7 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    flex: 3,
+                    flex: 2,
                     child: _buildTextField(
                       context,
                       controller: _portController,
@@ -306,6 +310,26 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
                         final n = int.tryParse((v ?? '').trim());
                         if (n == null || n < 200 || n > 60000) {
                           return '200-60000';
+                        }
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 3,
+                    child: _buildTextField(
+                      context,
+                      fieldKey: const Key('targetTimeoutField'),
+                      controller: _timeoutController,
+                      label: strings.get('timeoutMs'),
+                      hint: '1500',
+                      keyboardType: TextInputType.number,
+                      validator: (v) {
+                        // Keep in sync with NativeBindings.clampTimeout.
+                        final n = int.tryParse((v ?? '').trim());
+                        if (n == null || n < 100 || n > 10000) {
+                          return '100-10000';
                         }
                         return null;
                       },
@@ -401,6 +425,7 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
 
   Widget _buildTextField(
     BuildContext context, {
+    Key? fieldKey,
     required TextEditingController controller,
     required String label,
     required String hint,
@@ -414,6 +439,7 @@ class _AddTargetDialogState extends State<AddTargetDialog> {
             style: TextStyle(color: context.textSecondaryColor, fontSize: 12)),
         const SizedBox(height: 6),
         TextFormField(
+          key: fieldKey,
           controller: controller,
           validator: validator,
           keyboardType: keyboardType,
