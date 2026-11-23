@@ -61,6 +61,7 @@
   "portTcp": "Порт (для TCP)",
   "httpPath": "HTTP-путь",
   "intervalMs": "Интервал (мс)",
+  "timeoutMs": "Тайм-аут (мс)",
   "cancel": "Отмена",
   "addToMatrix": "Добавить в матрицу",
   "visualTraceroute": "Визуальная трассировка",
