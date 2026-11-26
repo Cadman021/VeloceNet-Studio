@@ -146,6 +146,11 @@ pub struct TargetStats {
     pub jitter_ms: f64,
     pub history: Vec<f64>,
     pub last_checked_epoch_ms: u64,
+    /// Unix ms of the most recent successful probe (0 = never answered).
+    /// Unlike last_checked_epoch_ms this ignores failures, so a dashboard can
+    /// show "last seen healthy" without a time series database.
+    #[serde(default)]
+    pub last_success_epoch_ms: u64,
     /// HTTP(S) only: status code of the latest sample (cleared on failure
     /// so the badge never shows a stale "200" for a dead target).
     pub http_status: Option<u16>,
@@ -165,6 +170,13 @@ pub struct TargetStats {
     pub last_sample_age_ms: Option<u64>,
     /// Age at which this target is considered stale.
     pub stale_after_ms: u64,
+    /// App group label (empty when unset). Kept out of the JSON when empty so
+    /// the desktop app's payload does not grow.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
+    /// Muted in the app: still probed and reported, but not alert-worthy.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 pub struct TargetMetricTracker {
@@ -194,9 +206,12 @@ pub struct TargetMetricTracker {
     interval_ms: u64,
     timeout_ms: u64,
     last_checked_epoch_ms: u64,
+    last_success_epoch_ms: u64,
     last_error: Option<String>,
     last_error_kind: Option<ProbeErrorKind>,
     tcp_fallback: bool,
+    group: String,
+    muted: bool,
 }
 
 impl TargetMetricTracker {
@@ -225,9 +240,12 @@ impl TargetMetricTracker {
             interval_ms: 1_000,
             timeout_ms: 1_500,
             last_checked_epoch_ms: 0,
+            last_success_epoch_ms: 0,
             last_error: None,
             last_error_kind: None,
             tcp_fallback: false,
+            group: String::new(),
+            muted: false,
         }
     }
 
@@ -236,6 +254,14 @@ impl TargetMetricTracker {
     pub fn with_schedule(mut self, interval_ms: u64, timeout_ms: u64) -> Self {
         self.interval_ms = interval_ms.max(1);
         self.timeout_ms = timeout_ms.max(1);
+        self
+    }
+
+    /// Organization metadata coming from the app export (group name and the
+    /// user's mute flag). Not used by the probe loop itself.
+    pub fn with_organization(mut self, group: String, muted: bool) -> Self {
+        self.group = group;
+        self.muted = muted;
         self
     }
 
@@ -299,6 +325,7 @@ impl TargetMetricTracker {
 
         if success {
             self.received_count += 1;
+            self.last_success_epoch_ms = sampled_at_ms;
             self.consecutive_failures = 0;
             self.consecutive_successes += 1;
             self.last_rtt_ms = rtt_ms;
@@ -431,6 +458,7 @@ impl TargetMetricTracker {
             jitter_ms: self.jitter_ms,
             history: self.recent_rtts.iter().copied().collect(),
             last_checked_epoch_ms: self.last_checked_epoch_ms,
+            last_success_epoch_ms: self.last_success_epoch_ms,
             http_status: self.last_http_status,
             cert_days_left: self.cert_days_left,
             last_error: self.last_error.clone(),
@@ -439,6 +467,8 @@ impl TargetMetricTracker {
             stale,
             last_sample_age_ms,
             stale_after_ms,
+            group: self.group.clone(),
+            muted: self.muted,
         }
     }
 }
@@ -472,6 +502,33 @@ mod tests {
         assert_eq!(second.last_checked_epoch_ms, 1_000);
         assert!(second.last_sample_age_ms.unwrap() >= 20);
         assert!(second.stale);
+    }
+
+    #[test]
+    fn last_success_ignores_failed_samples() {
+        let mut tracker = tracker();
+        tracker.record_probe_at(ProbeSample::success(3.0, None, None), 1_000);
+        assert_eq!(tracker.snapshot().last_success_epoch_ms, 1_000);
+
+        tracker.record_probe_at(
+            ProbeSample {
+                success: false,
+                rtt_ms: -1.0,
+                http_status: None,
+                cert_days_left: None,
+                error_kind: Some(ProbeErrorKind::Timeout),
+                error: Some("timed out".to_string()),
+                tcp_fallback: false,
+            },
+            2_000,
+        );
+        let failed = tracker.snapshot();
+        // The failure moves last_checked but must not move last_success.
+        assert_eq!(failed.last_checked_epoch_ms, 2_000);
+        assert_eq!(failed.last_success_epoch_ms, 1_000);
+
+        tracker.record_probe_at(ProbeSample::success(4.0, None, None), 3_000);
+        assert_eq!(tracker.snapshot().last_success_epoch_ms, 3_000);
     }
 
     #[test]

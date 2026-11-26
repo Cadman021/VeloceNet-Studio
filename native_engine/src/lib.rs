@@ -209,6 +209,8 @@ mod tests {
             interval_ms: 1_000,
             timeout_ms: 2_000,
             http_path: String::new(),
+            group: String::new(),
+            muted: false,
         });
         let stats = engine.probe_once();
         let _ = handle.join();

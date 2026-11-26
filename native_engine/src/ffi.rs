@@ -166,6 +166,10 @@ pub unsafe extern "C" fn netstudio_add_target(
             interval_ms: interval_ms.clamp(200, 60000),
             timeout_ms: timeout_ms.clamp(100, 10000),
             http_path,
+            // Organization lives in the Flutter layer; the engine only needs
+            // it for headless metrics.
+            group: String::new(),
+            muted: false,
         };
 
         with_engine(engine, false, |engine| {

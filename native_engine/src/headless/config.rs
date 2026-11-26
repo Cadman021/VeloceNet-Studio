@@ -11,6 +11,8 @@ use crate::probe::ProbeProtocol;
 
 const MAX_TARGETS: usize = 500;
 const MAX_CONFIG_BYTES: u64 = 16 * 1024 * 1024;
+/// Mirrors PingTarget.maxGroupLength in the app so both cap identically.
+const MAX_GROUP_CHARS: usize = 40;
 
 pub struct LoadedConfig {
     pub targets: Vec<TargetConfig>,
@@ -172,6 +174,13 @@ fn parse_target(entry: &Value) -> Result<Option<TargetConfig>, String> {
     };
     let raw_name = map.get("name").and_then(Value::as_str).unwrap_or("").trim();
     let name = truncate_chars(if raw_name.is_empty() { &host } else { raw_name }, 128);
+    // The app always writes both keys; hand-written configs may use either.
+    let group = sanitize_group(map.get("group").and_then(Value::as_str).unwrap_or(""));
+    let muted = map
+        .get("is_muted")
+        .or_else(|| map.get("muted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let id = map
         .get("id")
         .and_then(as_i64)
@@ -187,6 +196,8 @@ fn parse_target(entry: &Value) -> Result<Option<TargetConfig>, String> {
         interval_ms: clamped(map.get("interval_ms"), 1_000, 200, 60_000),
         timeout_ms: clamped(map.get("timeout_ms"), 1_500, 100, 10_000),
         http_path,
+        group,
+        muted,
     }))
 }
 
@@ -221,6 +232,12 @@ fn parse_protocol(value: Option<&Value>) -> ProbeProtocol {
         },
         _ => ProbeProtocol::Icmp,
     }
+}
+
+/// Trims, drops control characters and caps at the app's group length.
+fn sanitize_group(raw: &str) -> String {
+    let trimmed: String = raw.trim().chars().filter(|c| !c.is_control()).collect();
+    truncate_chars(&trimmed, MAX_GROUP_CHARS)
 }
 
 fn sanitize_http_path(raw: &str) -> String {
@@ -366,6 +383,32 @@ mod tests {
         let ids: Vec<u32> = config.targets.iter().map(|target| target.id).collect();
         assert_eq!(ids, vec![1, 2, 3]);
         assert_eq!(config.warnings.len(), 1);
+    }
+
+    #[test]
+    fn group_and_mute_are_read_for_labels_and_alerts() {
+        let config = parse_json(
+            r#"[{"host":"a.example","group":"  edge ","is_muted":true},
+                {"host":"b.example","muted":true},
+                {"host":"c.example","is_muted":"yes"},
+                {"host":"d.example","group":""}]"#,
+        );
+        assert_eq!(config.targets[0].group, "edge");
+        assert!(config.targets[0].muted);
+        // Hand-written configs may use the short key; anything non-boolean is
+        // ignored instead of rejecting the whole target.
+        assert!(config.targets[1].muted);
+        assert!(!config.targets[2].muted);
+        assert_eq!(config.targets[3].group, "");
+    }
+
+    #[test]
+    fn group_is_capped_and_stripped_of_control_characters() {
+        let long = "g".repeat(80);
+        let raw = format!(r#"[{{"host":"a.example","group":"{long}\u0007"}}]"#);
+        let config = parse_json(&raw);
+        assert_eq!(config.targets[0].group.chars().count(), MAX_GROUP_CHARS);
+        assert!(!config.targets[0].group.contains('\u{7}'));
     }
 
     #[test]

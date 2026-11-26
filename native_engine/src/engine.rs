@@ -25,6 +25,12 @@ pub struct TargetConfig {
     pub timeout_ms: u64,
     /// HTTP(S) only: request path, e.g. "/health". Empty means "/".
     pub http_path: String,
+    /// Optional organization label (the app's group). Empty when unset.
+    /// Surfaced as a Prometheus label by the headless daemon.
+    pub group: String,
+    /// Muted in the app: still probed and reported, but a failure must not
+    /// raise alerts (or fail a headless `--once` run).
+    pub muted: bool,
 }
 
 pub struct Engine {
@@ -74,7 +80,8 @@ impl Engine {
             config.port,
             config.protocol.as_str().to_string(),
         )
-        .with_schedule(config.interval_ms, config.timeout_ms);
+        .with_schedule(config.interval_ms, config.timeout_ms)
+        .with_organization(config.group.clone(), config.muted);
 
         self.targets.write().insert(id, config.clone());
         self.trackers.write().insert(id, tracker);
@@ -231,7 +238,10 @@ impl Engine {
         // period by the probe duration (period + RTT). `interval` ticks on a
         // fixed schedule instead; `Skip` drops catch-up ticks after a slow
         // probe rather than bursting.
-        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        // The first tick is immediate: waiting a whole period before the
+        // first sample leaves headless readiness (and Prometheus `up`) empty
+        // for up to a minute on configs with a slow per-target interval.
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now(), period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // TCP address cache: DNS on every tick wastes a lookup per probe

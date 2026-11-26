@@ -315,6 +315,7 @@ mod tests {
             jitter_ms: 0.25,
             history: vec![],
             last_checked_epoch_ms: 0,
+            last_success_epoch_ms: 0,
             http_status: None,
             cert_days_left: None,
             last_error: None,
@@ -323,6 +324,8 @@ mod tests {
             stale: false,
             last_sample_age_ms: Some(0),
             stale_after_ms: 3_500,
+            group: String::new(),
+            muted: false,
         }
     }
 
