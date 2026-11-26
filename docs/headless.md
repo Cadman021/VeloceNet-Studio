@@ -27,6 +27,43 @@ The engine still probes ICMP through the platform APIs: Windows IP Helper,
 and unprivileged ping sockets on Linux/macOS. No root is required for ICMP;
 only ports below 1024 need extra privileges.
 
+Release archives contain a standalone
+`netstudio-headless-<os>-<arch>` (plus `targets.example.json`) next to the
+full app bundle, so a daemon host does not download Flutter.
+
+### Docker
+
+The repository includes a multi-stage `native_engine/Dockerfile`; the image
+contains only the daemon and `ca-certificates` (~30 MB), and runs as the
+unprivileged `netstudio` user:
+
+```bash
+docker build -f native_engine/Dockerfile -t netstudio-headless:1.6.0 .
+docker run --rm -p 9101:9101 --cap-add NET_RAW \
+  -v "$PWD/targets.json:/etc/netstudio/targets.json:ro" \
+  netstudio-headless:1.6.0
+```
+
+`--cap-add NET_RAW` is what unprivileged ICMP needs inside a container;
+without it, ICMP targets fall back to TCP or report a permission error while
+TCP/HTTP/HTTPS targets keep working. Mount a token file and add
+`--http-token-file` when the port is published beyond `127.0.0.1`.
+
+### Man page and shell completions
+
+`docs/netstudio-headless.1` documents every flag and exit code;
+`docs/completions/netstudio-headless.bash` and
+`docs/completions/netstudio-headless.zsh` complete flags, choice values and
+file paths. Install them wherever the platform expects:
+
+```bash
+sudo install -m 644 docs/netstudio-headless.1 /usr/local/share/man/man1/
+sudo install -m 644 docs/completions/netstudio-headless.bash \
+  /usr/share/bash-completion/completions/netstudio-headless
+sudo install -m 644 docs/completions/netstudio-headless.zsh \
+  /usr/local/share/zsh/site-functions/_netstudio-headless
+```
+
 ## Quick start
 
 These commands assume you are in the repository root and have just built the
@@ -84,11 +121,18 @@ Notes:
 * `--probe-concurrency` bounds sockets, DNS lookups, and blocking-pool work
   independently of the target count (up to 500). Raise it only after checking
   file-descriptor and resolver limits; the default 32 is safe for a small VM.
-* `/readyz` returns `503` until the first probe sample exists; wait a few
-  seconds and retry. `/healthz` is alive immediately.
+* Every target is probed once immediately at startup, so `/readyz` does not
+  wait a full interval. It still returns `503` until **every** target has a
+  sample: one slow DNS lookup in a 500-target file delays readiness rather
+  than reporting a false `ready`.
+* `--interval` controls how often a snapshot is printed or written;
+  `--probe-interval` controls how often each target is probed. Without the
+  override, every target keeps its own `interval_ms` from the file, and
+  staleness is derived from that effective interval.
 * `--once` exits with `3` when at least one target is down. That is a valid
-  test result, not a crash; the snapshot is still printed. Add `--format json`
-  if you need machine-readable output in a terminal.
+  test result, not a crash; the snapshot is still printed. Muted targets are
+  still probed and reported, but they do not make `--once` fail. Add
+  `--format json` if you need machine-readable output in a terminal.
 * Press `Ctrl+C` to stop the daemon gracefully.
 * `docs/examples/targets.json` uses `1.1.1.1` over ICMP and TCP/53, so it
   exercises two probe types without DNS. Edit it or export your own targets
@@ -129,14 +173,42 @@ fields use the same defaults as the app: ICMP, port 80, 1000 ms interval,
 200–60000 ms, timeout 100–10000 ms, thresholds 1–20. Up to 500 targets are
 loaded.
 
-`app`, `version`, and `settings` are optional. Targets with
-`"is_enabled": false` are skipped. Invalid hosts (spaces, bad labels,
-octets above 255, malformed IPv6) are skipped with a warning; one bad
-target never prevents the rest from running. Structural JSON errors and a
-file with zero usable targets are fatal (`exit 2`).
+`app`, `version`, and `settings` are optional. `settings.offline_after` and
+`settings.recover_after` are the same alert thresholds as the app's Settings
+page; the app writes them when it exports a backup, so the exported file
+behaves identically under the daemon. Targets with `"is_enabled": false` are
+skipped. Invalid hosts (spaces, bad labels, octets above 255, malformed
+IPv6) are skipped with a warning; one bad target never prevents the rest from
+running. Structural JSON errors and a file with zero usable targets are
+fatal (`exit 2`).
 
 Duplicate or missing `id` values are assigned fresh ids so Prometheus labels
-and snapshots stay stable within a run.
+and snapshots stay stable within a run. `group` (capped at 40 characters) and
+`"is_muted": true` are carried through to the text table, the snapshot JSON,
+and Prometheus labels.
+
+### Validate before deploying
+
+`--check` answers "would this start right now?" without probing or listening:
+it parses the file, checks that the `--output` and `--pid-file` directories
+exist and are writable (and that a `--pid-file` is not held by a live
+process), and binds `--listen` once. Any failure exits `2`, so a CI job or a
+systemd `ExecStartPre` catches a bad mount or a taken port before the service
+goes into a restart loop.
+
+```text
+$ netstudio-headless -c docs/examples/targets.json --check --output /tmp/status.json
+config OK: 2 target(s) in docs/examples/targets.json
+  config   2 usable target(s), 0 muted
+  output   /tmp/status.json is writable
+```
+
+A terminal gets the text form above; when stdout is piped or redirected the
+report is JSON (`"type": "check"`, one entry per channel under `checks`), so
+`netstudio-headless -c targets.json --check | jq` works without extra flags and
+matches how `--once` and the daemon choose their format. `--format text` forces
+the table on a pipe, `--format json` forces JSON on a terminal. A failing
+channel is also logged to stderr with exit `2`.
 
 ## Usage
 
@@ -149,17 +221,20 @@ netstudio-headless --config targets.json --interval 15 --probe-concurrency 32 --
 | Flag | Meaning |
 |---|---|
 | `-c`, `--config <PATH>` | Target file (required for run/check/once) |
-| `--check` | Validate the file and exit |
+| `--check` | Validate the file, output/pid paths, and listen address, then exit |
 | `--once` | Probe every target once, print a snapshot, exit |
 | `--interval <SECS>` | Snapshot interval, 1–3600 (default 5) |
+| `--probe-interval <SECS>` | Probe every target this often, overriding each `interval_ms` (1–3600) |
 | `--probe-concurrency <N>` | Maximum probes in flight, 1–256 (default 32) |
-| `--listen <IP:PORT>` | Enable HTTP (disabled by default) |
+| `--listen <IP:PORT>` | Enable HTTP (disabled by default); daemon only |
 | `--output <PATH>` | Atomically replace this file with the latest snapshot |
-| `--pid-file <PATH>` | Write the process id while running |
+| `--pid-file <PATH>` | Write the process id while running; daemon only |
+| `--http-token-file <PATH>` | Require a bearer token on every endpoint but `/healthz`; daemon only |
 | `-q`, `--quiet` | Do not stream snapshots to stdout |
-| `--format <MODE>` | `auto` (default), `json` (NDJSON/pretty JSON), `text` (human table) |
+| `--format <MODE>` | `auto` (default: text on a terminal, JSON when piped), `json`, `text` |
 | `--color <WHEN>` | `auto` (default), `always`, `never`; `--no-color` is an alias for `never` |
 | `--log-level <LEVEL>` | `error`, `warn`, `info` (default), `debug` |
+| `--log-format <FMT>` | `text` (default) or `json` (one JSON object per line) |
 | `-h`, `--help` | Usage |
 | `-V`, `--version` | Version |
 
@@ -169,9 +244,16 @@ or redirected it prints pretty JSON so scripts keep working. Use
 suppress the `--once` result. It returns:
 
 * `0` — every probed target answered;
-* `3` — at least one target is down;
-* `2` — configuration/CLI error;
-* `1` — runtime failure (for example the output directory does not exist).
+* `3` — at least one non-muted target is down;
+* `2` — configuration/CLI error, including an unusable `--output` or
+  `--pid-file` path, a held pid file, or a `--listen` address that cannot be
+  bound. Paths are checked before the first probe, so `--once` prints
+  nothing on this path;
+* `1` — runtime failure after startup (for example the output directory is
+  removed while the daemon is running, or the HTTP server fails).
+
+`--listen`, `--pid-file` and `--http-token-file` are daemon options; combining
+them with `--once` is rejected with exit `2` instead of being silently ignored.
 
 The daemon streams a snapshot to stdout unless `--quiet` is given. `auto`
 chooses a color-coded table on a terminal and compact NDJSON when stdout
@@ -202,14 +284,15 @@ and `--no-color` disable them. Use `--format json` for the machine form
   "version": "1.6.0",
   "summary": {
     "targets": 2, "pending": 0, "online": 1, "degraded": 0,
-    "offline": 1, "down": 1, "stale": 0
+    "offline": 1, "down": 1, "stale": 0, "muted": 0
   },
   "targets": [ /* TargetStats, identical to the app/FFI JSON */ ]
 }
 ```
 
-`summary.down` counts targets whose most recent probe failed. A target that
-has not been probed yet is `pending`, not down. `summary.stale` counts
+`summary.down` counts targets whose most recent probe failed; `summary.muted`
+counts muted targets among them. A target that has not been probed yet is
+`pending`, not down. `summary.stale` counts
 targets whose latest sample is older than `2 × interval + timeout`; a stalled
 probe therefore stops looking fresh even though the daemon is still running.
 
@@ -221,6 +304,7 @@ Each target also carries the reason for its last failure:
 | `last_error_kind` | `dns`, `timeout`, `refused`, `unreachable`, `icmp_unavailable`, `tls`, `http`, or `other` |
 | `tcp_fallback` | `true` when ICMP was unavailable and the probe used TCP |
 | `last_sample_age_ms` | Age of the latest sample; `null` before the first one |
+| `last_success_epoch_ms` | Unix ms of the last successful probe; `0` until the target answers |
 | `stale` | `true` after `stale_after_ms` without a fresh sample |
 | `stale_after_ms` | This target's `2 × interval + timeout` threshold |
 
@@ -235,13 +319,28 @@ every scrape.
 * `SIGINT` / `SIGTERM` (Windows: console Ctrl+C / Ctrl+Break) trigger a
   graceful stop: probes are cancelled, the HTTP listener closes, and the pid
   file is removed.
-* Configuration is read once at startup. Restart the process after editing
-  the file; there is no `SIGHUP` reload yet.
+* On Unix, `SIGHUP` re-reads the config file without a restart: removed
+  targets stop, new ones start, edited ones restart with fresh counters, and
+  unchanged targets keep their history. Alert thresholds (`settings`) apply
+  immediately, and `/readyz` expects the new target count. A file that does not
+  parse is logged as an error and the running configuration stays in place, so
+  a bad edit never takes the daemon down. Windows has no equivalent signal:
+  restart the process there.
 * Logs go to stderr as `TIMESTAMP LEVEL message`; stdout is reserved for
-  snapshots.
+  snapshots. With `--log-format json` each line is
+  `{"time":"…","level":"warn","msg":"…"}` and never contains ANSI colour, so
+  `systemd`/`docker`/`jq` consume it without a parser. Messages with newlines
+  and quotes are escaped inside `msg`, so one record is always one line.
 * `--output` writes a temporary file in the same directory and renames it
   over the target, so readers never see a half-written JSON document. The
-  directory must already exist.
+  directory must already exist; the daemon validates it at startup and exits
+  `2` otherwise, instead of logging a failure on every tick. A failure that
+  appears later (disk unmounted, permissions changed) is logged once, and a
+  successful write afterwards logs that the file is writable again.
+* `--pid-file` is claimed with an exclusive create. A file left behind by a
+  killed process is taken over when its pid is no longer alive; a file held
+  by a live process aborts startup with exit `2`. The file is removed on a
+  graceful stop, and only if it still contains this process's pid.
 
 Example systemd unit:
 
@@ -271,9 +370,17 @@ WantedBy=multi-user.target
 
 ## HTTP endpoints
 
-HTTP is off unless `--listen` is passed. Bind to loopback and put an
-authenticating reverse proxy in front of it if the metrics must be reachable
-from another host; the built-in server has no TLS and no authentication.
+HTTP is off unless `--listen` is passed. Bind to loopback and put a TLS
+reverse proxy in front of it if the metrics must be reachable from another
+host: the built-in server has no TLS. It does support a static bearer token:
+pass `--http-token-file /etc/netstudio/http.token` (a file containing the
+token, so it never appears in the process list or shell history) or set
+`NETSTUDIO_HTTP_TOKEN`. The file wins when both are present. Every endpoint
+except `/healthz` then requires `Authorization: Bearer <token>` and answers
+`401` with `WWW-Authenticate: Bearer` otherwise; `/healthz` stays open because
+container and systemd probes usually cannot send headers. The comparison is
+constant-time, tokens are capped at 256 characters, and `--check` fails if the
+file is missing or empty.
 Binding to a non-loopback address logs an explicit warning at startup, because
 anyone who can reach the port can read target names, hosts, and errors.
 Network access should be restricted by the firewall or the proxy.
@@ -282,7 +389,7 @@ Network access should be restricted by the firewall or the proxy.
 |---|---|
 | `/` | Short plain-text index |
 | `/healthz` | `200 ok` whenever the process is alive |
-| `/readyz` | `200 ready` after at least one sample; `503 starting` before |
+| `/readyz` | `200 ready` once every target has at least one sample; `503 starting` before |
 | `/metrics` | Prometheus text format |
 | `/api/v1/status` | The latest snapshot as JSON |
 
@@ -297,14 +404,15 @@ connection is closed after one response.
 ### Prometheus metrics
 
 All target metrics carry the labels
-`id`, `name`, `host`, `port`, `protocol`.
+`id`, `name`, `host`, `port`, `protocol`, `group` (`""` when unset).
 
 | Metric | Type | Meaning |
 |---|---|---|
 | `netstudio_build_info` | gauge | Always `1`, labelled with `version` |
 | `netstudio_target_info` | gauge | Always `1`; the target exists |
-| `netstudio_target_up` | gauge | `1` if the latest probe answered |
+| `netstudio_target_up` | gauge | `1` if the latest probe answered; absent until the first sample |
 | `netstudio_target_status` | gauge | `0` pending, `1` online, `2` degraded, `3` offline |
+| `netstudio_target_muted` | gauge | `1` when the target is muted (still probed, excluded from `--once` failure) |
 | `netstudio_target_sent_total` | counter | Probes sent |
 | `netstudio_target_received_total` | counter | Replies received |
 | `netstudio_target_lost_total` | counter | Probes without a reply |
@@ -316,6 +424,7 @@ All target metrics carry the labels
 | `netstudio_target_jitter_ms` | gauge | RFC 3550 jitter estimate |
 | `netstudio_target_last_check_timestamp_seconds` | gauge | Unix time when the latest probe sample completed (does not advance on scrapes) |
 | `netstudio_target_last_sample_age_seconds` | gauge | Age of the latest sample; `-1` before the first sample |
+| `netstudio_target_last_success_timestamp_seconds` | gauge | Unix time of the last successful probe; `-1` if the target never answered |
 | `netstudio_target_stale` | gauge | `1` when no fresh sample arrived within `2 × interval + timeout` |
 | `netstudio_target_tcp_fallback` | gauge | `1` when the latest ICMP probe used TCP fallback |
 | `netstudio_target_error_info` | gauge | `1` with a `kind` label for the latest failure; one series per failed target |
@@ -326,7 +435,7 @@ Example alerts:
 
 ```yaml
 - alert: NetStudioTargetDown
-  expr: netstudio_target_up == 0 and netstudio_target_sent_total > 0
+  expr: netstudio_target_up == 0 and netstudio_target_muted == 0
   for: 2m
 
 - alert: NetStudioProbeStalled
