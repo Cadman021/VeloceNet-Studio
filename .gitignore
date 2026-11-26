@@ -52,6 +52,11 @@ build/linux/
 # Symbolication related
 app.*.symbols
 
+# Headless CLI local runs
+/targets.json
+/status.json
+/headless.pid
+
 # Obfuscation related
 app.*.map.json
 

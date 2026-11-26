@@ -27,6 +27,69 @@ The engine still probes ICMP through the platform APIs: Windows IP Helper,
 and unprivileged ping sockets on Linux/macOS. No root is required for ICMP;
 only ports below 1024 need extra privileges.
 
+## Quick start
+
+These commands assume you are in the repository root and have just built the
+binary. Replace the paths if `netstudio-headless` is installed elsewhere.
+
+### Windows (PowerShell)
+
+```powershell
+cargo build --release --manifest-path native_engine\Cargo.toml
+Copy-Item docs\examples\targets.json targets.json
+
+# 1. Validate the file (does not send probes).
+.\native_engine\target\release\netstudio-headless.exe --config targets.json --check
+
+# 2. One probe of every target, then exit.
+.\native_engine\target\release\netstudio-headless.exe --config targets.json --once
+
+# 3. Run as a daemon with HTTP enabled.
+.\native_engine\target\release\netstudio-headless.exe --config targets.json --listen 127.0.0.1:9187 --output status.json --interval 5
+```
+
+Open a second PowerShell window for the endpoints:
+
+```powershell
+curl.exe -s http://127.0.0.1:9187/healthz
+curl.exe -s http://127.0.0.1:9187/readyz
+curl.exe -s http://127.0.0.1:9187/metrics
+curl.exe -s http://127.0.0.1:9187/api/v1/status
+```
+
+### Linux / macOS
+
+```bash
+cargo build --release --manifest-path native_engine/Cargo.toml
+cp docs/examples/targets.json targets.json
+
+./native_engine/target/release/netstudio-headless --config targets.json --check
+./native_engine/target/release/netstudio-headless --config targets.json --once
+./native_engine/target/release/netstudio-headless --config targets.json \
+  --listen 127.0.0.1:9187 --output status.json --interval 5
+```
+
+```bash
+curl -s http://127.0.0.1:9187/healthz
+curl -s http://127.0.0.1:9187/readyz
+curl -s http://127.0.0.1:9187/metrics
+curl -s http://127.0.0.1:9187/api/v1/status
+```
+
+Notes:
+
+* On Windows, use **one line** or PowerShell's backtick (`` ` ``) for
+  continuation. A trailing backslash is a bash/zsh convention and is passed
+  to the program as an argument by PowerShell.
+* `/readyz` returns `503` until the first probe sample exists; wait a few
+  seconds and retry. `/healthz` is alive immediately.
+* `--once` exits with `3` when at least one target is down. That is a valid
+  test result, not a crash; the JSON snapshot is still printed.
+* Press `Ctrl+C` to stop the daemon gracefully.
+* `docs/examples/targets.json` uses `1.1.1.1` over ICMP and TCP/53, so it
+  exercises two probe types without DNS. Edit it or export your own targets
+  from the desktop app.
+
 ## Configuration
 
 Use **Export JSON** in the app (or a hand-written file). Both forms are
@@ -76,8 +139,7 @@ and snapshots stay stable within a run.
 ```bash
 netstudio-headless --config targets.json --check
 netstudio-headless --config targets.json --once
-netstudio-headless --config targets.json --interval 15 \
-  --listen 127.0.0.1:9101 --output /var/lib/netstudio/status.json
+netstudio-headless --config targets.json --interval 15 --listen 127.0.0.1:9101 --output /var/lib/netstudio/status.json
 ```
 
 | Flag | Meaning |
