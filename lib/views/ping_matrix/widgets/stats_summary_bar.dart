@@ -465,7 +465,13 @@ Future<void> _exportTargetsFile(
     BuildContext context, PingMatrixController controller) async {
   final strings = AppStrings.of(context);
   try {
-    final path = await exportTargetsFile(controller.targets);
+    // Include the alert thresholds: the headless daemon reads them as
+    // `settings` so the same config behaves the same way without the UI.
+    final path = await exportTargetsFile(
+      controller.targets,
+      offlineAfter: controller.alertOfflineAfter,
+      recoverAfter: controller.alertRecoverAfter,
+    );
     if (!context.mounted) return;
     final fileName = path.split(RegExp(r'[/\\]')).last;
     ScaffoldMessenger.of(context).showSnackBar(

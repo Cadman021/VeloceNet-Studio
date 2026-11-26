@@ -18,11 +18,24 @@ class TargetImportResult {
 }
 
 /// Serializes targets into a versioned backup envelope. Pure, unit tested.
-String exportTargetsJson(List<PingTarget> targets) {
-  final envelope = {
+///
+/// [offlineAfter] / [recoverAfter] add the alert-threshold block the headless
+/// daemon reads as `settings`; when omitted the envelope stays target-only
+/// (the persisted copy and the headless defaults keep applying).
+String exportTargetsJson(
+  List<PingTarget> targets, {
+  int? offlineAfter,
+  int? recoverAfter,
+}) {
+  final envelope = <String, dynamic>{
     'app': 'velocenet-studio',
     'version': kTargetBackupVersion,
     'exported_at': DateTime.now().toUtc().toIso8601String(),
+    if (offlineAfter != null || recoverAfter != null)
+      'settings': {
+        if (offlineAfter != null) 'offline_after': offlineAfter,
+        if (recoverAfter != null) 'recover_after': recoverAfter,
+      },
     'targets': targets.map((t) => t.toJson()).toList(),
   };
   return const JsonEncoder.withIndent('  ').convert(envelope);
@@ -176,7 +189,11 @@ NetworkProtocol _parseProtocol(dynamic v) {
 }
 
 /// Writes the backup to `Documents/VeloceNet-Studio/` and returns the path.
-Future<String> exportTargetsFile(List<PingTarget> targets) async {
+Future<String> exportTargetsFile(
+  List<PingTarget> targets, {
+  int? offlineAfter,
+  int? recoverAfter,
+}) async {
   final docs = await getApplicationDocumentsDirectory();
   final dir = Directory(
     '${docs.path}${Platform.pathSeparator}VeloceNet-Studio',
@@ -188,6 +205,13 @@ Future<String> exportTargetsFile(List<PingTarget> targets) async {
       '${now.year}${two(now.month)}${two(now.day)}-${two(now.hour)}${two(now.minute)}${two(now.second)}';
   final file =
       File('${dir.path}${Platform.pathSeparator}velocenet-targets-$stamp.json');
-  await file.writeAsString(exportTargetsJson(targets), flush: true);
+  await file.writeAsString(
+    exportTargetsJson(
+      targets,
+      offlineAfter: offlineAfter,
+      recoverAfter: recoverAfter,
+    ),
+    flush: true,
+  );
   return file.path;
 }

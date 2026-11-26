@@ -19,7 +19,15 @@ class PingMatrixController extends ChangeNotifier {
   final Map<int, PingMetric> _metrics = {};
   bool _isMonitoring = false;
 
+  /// Mirrors the alert thresholds pushed into the prober, so a backup export
+  /// can carry them (the headless daemon reads them as `settings`). Null
+  /// until the shell configures them.
+  int? _alertOfflineAfter;
+  int? _alertRecoverAfter;
+
   List<PingTarget> get targets => _targets;
+  int? get alertOfflineAfter => _alertOfflineAfter;
+  int? get alertRecoverAfter => _alertRecoverAfter;
   Map<int, PingMetric> get metrics => _metrics;
   bool get isMonitoring => _isMonitoring;
   bool get isNativeEngineActive => _service.isNativeAvailable;
@@ -167,6 +175,8 @@ class PingMatrixController extends ChangeNotifier {
 
   /// Applies alert thresholds to the prober (native engine + fallback).
   void configureAlerts({required int offlineAfter, required int recoverAfter}) {
+    _alertOfflineAfter = offlineAfter;
+    _alertRecoverAfter = recoverAfter;
     _service.configureAlerts(
       offlineAfter: offlineAfter,
       recoverAfter: recoverAfter,
