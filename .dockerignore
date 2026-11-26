@@ -1,0 +1,7 @@
+build/
+.dart_tool/
+native_engine/target/
+**/.git/
+**/node_modules/
+*.zip
+*.tar.gz

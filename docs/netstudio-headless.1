@@ -1,0 +1,131 @@
+.TH NETSTUDIO-HEADLESS 1 "2026" "netstudio-headless 1.6.0" "User Commands"
+.SH NAME
+netstudio-headless \- run the NetStudio probing engine without the desktop app
+.SH SYNOPSIS
+.B netstudio-headless
+\-\-config
+.I PATH
+.RI [ options ]
+.SH DESCRIPTION
+.B netstudio-headless
+probes the targets listed in a NetStudio JSON configuration file (ICMP, TCP,
+HTTP, HTTPS) and reports latency, jitter, loss and status. It has three modes:
+a one-shot probe
+.RB ( \-\-once ),
+a preflight validation
+.RB ( \-\-check ),
+and a daemon that streams snapshots, writes a status file and serves HTTP for
+health checks and Prometheus scraping.
+.PP
+The daemon stops gracefully on SIGINT/SIGTERM and reloads its configuration on
+SIGHUP (Unix).
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " " \fIPATH\fR
+Target configuration file. Required for every mode.
+.TP
+.B \-\-check
+Validate the file, the
+.B \-\-output
+and
+.B \-\-pid-file
+paths and the
+.B \-\-listen
+address, then exit without probing.
+.TP
+.B \-\-once
+Probe every target once, print a snapshot, and exit. Exit status 3 means at
+least one non-muted target is down.
+.TP
+.BI \-\-interval " " SECS
+Snapshot interval in seconds, 1 to 3600 (default 5).
+.TP
+.BI \-\-probe\-interval " " SECS
+Probe every target this often, overriding each target's own interval_ms.
+.TP
+.BI \-\-probe\-concurrency " " N
+Maximum probes in flight, 1 to 256 (default 32).
+.TP
+.BI \-\-listen " " ADDR
+Serve HTTP on ADDR, for example 127.0.0.1:9101. Daemon mode only.
+.TP
+.BI \-\-output " " PATH
+Atomically replace PATH with the latest JSON snapshot.
+.TP
+.BI \-\-pid\-file " " PATH
+Claim PATH exclusively, write the pid and remove it on a graceful stop.
+Daemon mode only.
+.TP
+.BI \-\-http\-token\-file " " PATH
+Require "Authorization: Bearer <token>" on every HTTP endpoint except
+/healthz; the token is read from PATH. Daemon mode only.
+.TP
+.BR \-q ", " \-\-quiet
+Do not stream snapshots to stdout. The HTTP endpoints and
+.B \-\-output
+keep working.
+.TP
+.BI \-\-format " " MODE
+.IR auto " (default: text on a terminal, JSON when piped), " json " or " text .
+.TP
+.BI \-\-color " " WHEN
+.IR auto " (default), " always " or " never .
+.TP
+.B \-\-no\-color
+Same as
+.BR "\-\-color never" .
+.TP
+.BI \-\-log\-level " " LEVEL
+.IR error ", " warn ", " info " (default) or " debug .
+.TP
+.BI \-\-log\-format " " FMT
+.IR text " (default) or " json
+for one JSON object per stderr line.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit.
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.SH ENVIRONMENT
+.TP
+.B NETSTUDIO_HTTP_TOKEN
+Bearer token used when
+.B \-\-http\-token\-file
+is not given.
+.TP
+.B NO_COLOR
+Disable ANSI colour, like
+.BR "\-\-color never" .
+.SH EXIT STATUS
+.TP
+.B 0
+Success; with
+.B \-\-once
+every probed target answered.
+.TP
+.B 1
+Runtime failure after startup.
+.TP
+.B 2
+Invalid configuration or command line, unusable output/pid path, or an
+address that cannot be bound.
+.TP
+.B 3
+.B \-\-once
+finished with at least one non-muted target down.
+.SH FILES
+.TP
+.I /etc/netstudio/targets.json
+Common location for the target file in deployments.
+.SH EXAMPLES
+.TP
+netstudio-headless \-c targets.json \-\-check
+Preflight a configuration and its paths.
+.TP
+netstudio-headless \-c targets.json \-q \-\-output /var/lib/netstudio/status.json \\\\
+\-\-listen 127.0.0.1:9101 \-\-pid\-file /run/netstudio/headless.pid
+Run the daemon with a status file and Prometheus endpoint.
+.SH SEE ALSO
+The full documentation and example configuration in
+.IR docs/headless.md " and " docs/examples/targets.json .

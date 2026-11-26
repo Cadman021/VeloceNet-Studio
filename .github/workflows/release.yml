@@ -62,11 +62,23 @@ jobs:
           Copy-Item netstudio-headless.exe -Destination build/windows/x64/runner/Release -Force
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath velocenet-studio-windows-x64.zip -Force
 
+      # Headless-only archive: a daemon host does not need the Flutter runtime,
+      # and this zip is a few MB instead of a whole bundle.
+      - name: Package standalone headless daemon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path headless -Force | Out-Null
+          Copy-Item native_engine/target/release/netstudio-headless.exe headless/ -Force
+          Copy-Item docs/examples/targets.json headless/targets.example.json -Force
+          Compress-Archive -Path headless/* -DestinationPath netstudio-headless-windows-x64.zip -Force
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-windows-x64
-          path: velocenet-studio-windows-x64.zip
+          path: |
+            velocenet-studio-windows-x64.zip
+            netstudio-headless-windows-x64.zip
 
   build-linux:
     name: Build Linux bundle
@@ -114,11 +126,21 @@ jobs:
           cp native_engine/target/release/netstudio-headless build/linux/x64/release/bundle/
           tar -czf velocenet-studio-linux-x64.tar.gz -C build/linux/x64/release/bundle .
 
+      # Headless-only archive (see the Windows job).
+      - name: Package standalone headless daemon
+        run: |
+          mkdir -p headless
+          cp native_engine/target/release/netstudio-headless headless/
+          cp docs/examples/targets.json headless/targets.example.json
+          tar -czf netstudio-headless-linux-x64.tar.gz -C headless .
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-linux-x64
-          path: velocenet-studio-linux-x64.tar.gz
+          path: |
+            velocenet-studio-linux-x64.tar.gz
+            netstudio-headless-linux-x64.tar.gz
 
   build-macos:
     name: Build macOS bundle
@@ -160,11 +182,21 @@ jobs:
           cp native_engine/target/release/netstudio-headless "$APP/Contents/MacOS/"
           ditto -c -k --sequesterRsrc --keepParent "$APP" velocenet-studio-macos-arm64.zip
 
+      # Headless-only archive (see the Windows job).
+      - name: Package standalone headless daemon
+        run: |
+          mkdir -p headless
+          cp native_engine/target/release/netstudio-headless headless/
+          cp docs/examples/targets.json headless/targets.example.json
+          ditto -c -k --sequesterRsrc --keepParent headless netstudio-headless-macos-arm64.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-macos-arm64
-          path: velocenet-studio-macos-arm64.zip
+          path: |
+            velocenet-studio-macos-arm64.zip
+            netstudio-headless-macos-arm64.zip
 
   publish:
     name: Publish GitHub Release
