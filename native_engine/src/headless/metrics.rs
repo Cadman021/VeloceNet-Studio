@@ -104,10 +104,51 @@ pub fn render(stats: &[TargetStats], version: &str) -> String {
     gauge_family(
         &mut out,
         "netstudio_target_last_check_timestamp_seconds",
-        "Unix timestamp of the latest snapshot in seconds.",
+        "Unix timestamp when the latest probe sample completed.",
         stats,
         |target| target.last_checked_epoch_ms as f64 / 1_000.0,
     );
+    gauge_family(
+        &mut out,
+        "netstudio_target_last_sample_age_seconds",
+        "Age of the latest probe sample in seconds (-1 before the first sample).",
+        stats,
+        |target| {
+            target
+                .last_sample_age_ms
+                .map_or(-1.0, |age_ms| age_ms as f64 / 1_000.0)
+        },
+    );
+    gauge_family(
+        &mut out,
+        "netstudio_target_stale",
+        "1 when no fresh sample arrived within 2 x interval + timeout.",
+        stats,
+        |target| if target.stale { 1.0 } else { 0.0 },
+    );
+    gauge_family(
+        &mut out,
+        "netstudio_target_tcp_fallback",
+        "1 when the latest ICMP probe used the TCP fallback.",
+        stats,
+        |target| if target.tcp_fallback { 1.0 } else { 0.0 },
+    );
+
+    let _ = writeln!(
+        out,
+        "# HELP netstudio_target_error_info Latest probe failure kind (one series per failed target).",
+    );
+    let _ = writeln!(out, "# TYPE netstudio_target_error_info gauge");
+    for target in stats {
+        if let Some(kind) = target.last_error_kind {
+            let _ = writeln!(
+                out,
+                "netstudio_target_error_info{{{},kind=\"{}\"}} 1",
+                labels(target),
+                escape_label(kind.as_str())
+            );
+        }
+    }
 
     let _ = writeln!(
         out,
@@ -255,6 +296,34 @@ mod tests {
         assert!(text.contains("netstudio_target_http_status_code{id=\"1\""));
         assert!(text.contains(" 204"));
         assert!(text.contains("netstudio_target_cert_days_left"));
+        assert!(text.contains("netstudio_target_stale"));
+        assert!(text.contains("netstudio_target_last_sample_age_seconds"));
+        assert!(text.contains("netstudio_target_tcp_fallback"));
+    }
+
+    #[test]
+    fn renders_error_kind_without_the_raw_message() {
+        let mut tracker = TargetMetricTracker::new(
+            2,
+            "Broken".to_string(),
+            "127.0.0.1".to_string(),
+            80,
+            "TCP".to_string(),
+        );
+        tracker.record_probe(crate::stats::ProbeSample {
+            success: false,
+            rtt_ms: -1.0,
+            http_status: None,
+            cert_days_left: None,
+            error_kind: Some(crate::stats::ProbeErrorKind::Refused),
+            error: Some("Connect failed: connection refused".to_string()),
+            tcp_fallback: true,
+        });
+        let text = render(&[tracker.snapshot()], "1.6.0");
+        assert!(text.contains("netstudio_target_error_info{id=\"2\","));
+        assert!(text.contains("kind=\"refused\""));
+        assert!(!text.contains("connection refused"));
+        assert!(text.contains("netstudio_target_tcp_fallback{id=\"2\","));
     }
 
     #[test]

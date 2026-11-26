@@ -3,11 +3,20 @@
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{metrics, State, NAME, VERSION};
+
+/// Fixed worker pool: a slow or malicious client can pin at most this many
+/// threads, no matter how many TCP connections are open.
+const HTTP_WORKERS: usize = 8;
+const HTTP_QUEUE_DEPTH: usize = 16;
+const MAX_HEADER_BYTES: usize = 8 * 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+const IO_TIMEOUT: Duration = Duration::from_secs(3);
 
 struct Response {
     status: u16,
@@ -42,7 +51,9 @@ impl Response {
 pub struct Server {
     addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
-    handle: Option<thread::JoinHandle<()>>,
+    accept_handle: Option<thread::JoinHandle<()>>,
+    workers: Vec<thread::JoinHandle<()>>,
+    sender: Option<SyncSender<TcpStream>>,
 }
 
 impl Server {
@@ -51,29 +62,55 @@ impl Server {
         listener.set_nonblocking(true)?;
         let local = listener.local_addr()?;
         let shutdown = Arc::new(AtomicBool::new(false));
-        let flag = shutdown.clone();
-        let handle = thread::Builder::new()
-            .name("netstudio-http".to_string())
-            .spawn(move || {
-                while !flag.load(Ordering::Relaxed) {
-                    match listener.accept() {
-                        Ok((stream, _peer)) => {
-                            let state = state.clone();
-                            let _ = thread::Builder::new()
-                                .name("netstudio-http-conn".to_string())
-                                .spawn(move || handle_connection(stream, state));
-                        }
-                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(50));
-                        }
-                        Err(_) => thread::sleep(Duration::from_millis(100)),
+        let (sender, receiver) = mpsc::sync_channel::<TcpStream>(HTTP_QUEUE_DEPTH);
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        let mut workers: Vec<thread::JoinHandle<()>> = Vec::with_capacity(HTTP_WORKERS);
+        for index in 0..HTTP_WORKERS {
+            let worker_state = state.clone();
+            let worker_receiver = receiver.clone();
+            let worker_shutdown = shutdown.clone();
+            let handle = match thread::Builder::new()
+                .name(format!("netstudio-http-worker-{index}"))
+                .spawn(move || worker_loop(worker_receiver, worker_state, worker_shutdown))
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    shutdown.store(true, Ordering::SeqCst);
+                    drop(sender);
+                    for worker in workers {
+                        let _ = worker.join();
                     }
+                    return Err(error);
                 }
-            })?;
+            };
+            workers.push(handle);
+        }
+
+        let accept_sender = sender.clone();
+        let flag = shutdown.clone();
+        let accept_handle = match thread::Builder::new()
+            .name("netstudio-http".to_string())
+            .spawn(move || accept_loop(listener, accept_sender, flag))
+        {
+            Ok(handle) => handle,
+            Err(error) => {
+                // Do not detach the worker pool if the acceptor could not
+                // start: set the flag, wake the workers and join them.
+                shutdown.store(true, Ordering::SeqCst);
+                drop(sender);
+                for worker in workers {
+                    let _ = worker.join();
+                }
+                return Err(error);
+            }
+        };
         Ok(Self {
             addr: local,
             shutdown,
-            handle: Some(handle),
+            accept_handle: Some(accept_handle),
+            workers,
+            sender: Some(sender),
         })
     }
 
@@ -82,9 +119,15 @@ impl Server {
     }
 
     pub fn stop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
+        self.shutdown.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.accept_handle.take() {
             let _ = handle.join();
+        }
+        // Dropping the last sender wakes idle workers; join everyone so no
+        // connection thread outlives the daemon.
+        self.sender.take();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
         }
     }
 }
@@ -95,21 +138,119 @@ impl Drop for Server {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, state: Arc<State>) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-    let Some(request) = read_request(&mut stream) else {
-        return;
+fn accept_loop(listener: TcpListener, sender: SyncSender<TcpStream>, shutdown: Arc<AtomicBool>) {
+    while !shutdown.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((stream, _peer)) => {
+                // Accepted sockets can inherit non-blocking mode from the
+                // listener on some platforms; workers need blocking reads
+                // with explicit timeouts.
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
+                let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+                match sender.try_send(stream) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(mut stream)) => {
+                        let response = Response::text(
+                            503,
+                            "Service Unavailable",
+                            "server is busy\n".to_string(),
+                        );
+                        write_response(&mut stream, &response, false);
+                    }
+                    Err(TrySendError::Disconnected(_)) => break,
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(_) => thread::sleep(Duration::from_millis(50)),
+        }
+    }
+}
+
+fn worker_loop(
+    receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>,
+    state: Arc<State>,
+    shutdown: Arc<AtomicBool>,
+) {
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+        let job = {
+            let receiver = receiver
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            receiver.recv_timeout(Duration::from_millis(200))
+        };
+        match job {
+            Ok(stream) => handle_connection(stream, &state),
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadError {
+    Incomplete,
+    TooLarge,
+    Timeout,
+}
+
+fn handle_connection(mut stream: TcpStream, state: &State) {
+    let request = match read_request(&mut stream) {
+        Ok(request) => request,
+        Err(error) => {
+            let response = match error {
+                ReadError::TooLarge => Response::text(
+                    413,
+                    "Payload Too Large",
+                    "request header exceeds 8192 bytes\n".to_string(),
+                ),
+                ReadError::Timeout => Response::text(
+                    408,
+                    "Request Timeout",
+                    "request was not completed in time\n".to_string(),
+                ),
+                ReadError::Incomplete => Response::text(
+                    400,
+                    "Bad Request",
+                    "malformed or incomplete HTTP request\n".to_string(),
+                ),
+            };
+            write_response(&mut stream, &response, false);
+            return;
+        }
     };
+
     let line = request.lines().next().unwrap_or("");
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let target = parts.next().unwrap_or("");
+    let version = parts.next().unwrap_or("");
+    if method.is_empty()
+        || target.is_empty()
+        || !target.starts_with('/')
+        || !version.starts_with("HTTP/1.")
+        || parts.next().is_some()
+    {
+        let response = Response::text(
+            400,
+            "Bad Request",
+            "malformed or incomplete HTTP request\n".to_string(),
+        );
+        write_response(&mut stream, &response, false);
+        return;
+    }
+
     let path = target.split("?").next().unwrap_or("");
     let path = path.split("#").next().unwrap_or("");
     let head_only = method.eq_ignore_ascii_case("HEAD");
     let response = if method.eq_ignore_ascii_case("GET") || head_only {
-        route(path, &state)
+        route(path, state)
     } else {
         Response {
             allow: Some("GET, HEAD"),
@@ -123,31 +264,40 @@ fn handle_connection(mut stream: TcpStream, state: Arc<State>) {
     write_response(&mut stream, &response, head_only);
 }
 
-fn read_request(stream: &mut TcpStream) -> Option<String> {
+fn read_request(stream: &mut TcpStream) -> Result<String, ReadError> {
+    let deadline = Instant::now() + REQUEST_TIMEOUT;
     let mut data = Vec::with_capacity(1_024);
     let mut chunk = [0u8; 1_024];
     loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ReadError::Timeout);
+        }
+        let _ = stream.set_read_timeout(Some(remaining));
         match stream.read(&mut chunk) {
-            Ok(0) => break,
+            Ok(0) => return Err(ReadError::Incomplete),
             Ok(read) => {
                 data.extend_from_slice(&chunk[..read]);
-                if data.len() >= 8_192 || data.windows(4).any(|window| window == b"\r\n\r\n") {
+                if data.windows(4).any(|window| window == b"\r\n\r\n") {
                     break;
                 }
+                if data.len() > MAX_HEADER_BYTES {
+                    return Err(ReadError::TooLarge);
+                }
             }
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(error)
                 if error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut =>
             {
-                break;
+                return Err(ReadError::Timeout);
             }
-            Err(_) => return None,
+            Err(_) => return Err(ReadError::Incomplete),
         }
     }
-    if data.is_empty() {
-        None
-    } else {
-        Some(String::from_utf8_lossy(&data).into_owned())
+    if data.len() > MAX_HEADER_BYTES {
+        return Err(ReadError::TooLarge);
     }
+    String::from_utf8(data).map_err(|_| ReadError::Incomplete)
 }
 
 fn route(path: &str, state: &State) -> Response {
@@ -280,6 +430,64 @@ mod tests {
         let response = request(&server, "HEAD", "/healthz");
         assert!(response.contains("Content-Length: 3\r\n"));
         assert_eq!(body(&response), "");
+    }
+
+    #[test]
+    fn status_exposes_failure_reason_and_fallback() {
+        let state = State::new(1);
+        let mut tracker = TargetMetricTracker::new(
+            7,
+            "Broken".to_string(),
+            "broken.invalid".to_string(),
+            443,
+            "HTTPS".to_string(),
+        );
+        tracker.record_probe(crate::stats::ProbeSample {
+            success: false,
+            rtt_ms: -1.0,
+            http_status: None,
+            cert_days_left: None,
+            error_kind: Some(crate::stats::ProbeErrorKind::Dns),
+            error: Some("DNS resolution failed: no such host".to_string()),
+            tcp_fallback: true,
+        });
+        state.update(vec![tracker.snapshot()]);
+        let server = start(state);
+        let status = request(&server, "GET", "/api/v1/status");
+        let json: serde_json::Value = serde_json::from_str(body(&status)).expect("json");
+        assert_eq!(
+            json["targets"][0]["last_error"],
+            "DNS resolution failed: no such host"
+        );
+        assert_eq!(json["targets"][0]["last_error_kind"], "dns");
+        assert_eq!(json["targets"][0]["tcp_fallback"], true);
+    }
+
+    #[test]
+    fn malformed_and_oversized_requests_get_400_and_413() {
+        let server = start(State::new(1));
+        let malformed = raw_request(&server, b"not-a-request\r\n\r\n");
+        assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
+        let incomplete = raw_request(&server, b"GET / HTTP/1.1\r\nX: y\r\n");
+        assert!(incomplete.starts_with("HTTP/1.1 400"), "{incomplete}");
+        let oversized = format!(
+            "GET / HTTP/1.1\r\nX-Pad: {}\r\n\r\n",
+            "a".repeat(MAX_HEADER_BYTES)
+        );
+        let too_large = raw_request(&server, oversized.as_bytes());
+        assert!(too_large.starts_with("HTTP/1.1 413"), "{too_large}");
+    }
+
+    fn raw_request(server: &Server, bytes: &[u8]) -> String {
+        let mut stream = TcpStream::connect(server.addr()).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let _ = stream.write_all(bytes);
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let mut response = String::new();
+        let _ = stream.read_to_string(&mut response);
+        response
     }
 
     #[test]

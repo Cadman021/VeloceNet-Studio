@@ -27,7 +27,8 @@ use rustls::{
     StreamOwned,
 };
 
-use super::tcp::ProbeResult;
+use super::tcp::{classify_io_error, ProbeResult};
+use crate::stats::ProbeErrorKind;
 
 /// Accepts every presented certificate after recording the chain, so the
 /// probe can report the notAfter date even for expired/self-signed certs.
@@ -96,30 +97,39 @@ pub fn probe_http_sync(
     let host_port = format_host_port(host, port);
     let addrs: Vec<SocketAddr> = match host_port.to_socket_addrs() {
         Ok(iter) => iter.collect(),
-        Err(e) => return ProbeResult::failure(format!("DNS resolution failed: {}", e)),
+        Err(e) => {
+            return ProbeResult::failure_kind(
+                ProbeErrorKind::Dns,
+                format!("DNS resolution failed: {}", e),
+            )
+        }
     };
     if addrs.is_empty() {
-        return ProbeResult::failure("No IP address resolved for host");
+        return ProbeResult::failure_kind(ProbeErrorKind::Dns, "No IP address resolved for host");
     }
 
     // Try every resolved address within the budget (IPv6-first hosts that
     // only listen on v4 must not fail the probe).
     let mut stream = None;
     let mut last_error = String::from("Connection timed out");
+    let mut last_kind = ProbeErrorKind::Timeout;
     for addr in &addrs {
         let Some(rem) = remaining().filter(|r| *r > Duration::from_millis(5)) else {
-            return ProbeResult::failure("Timeout during resolution");
+            return ProbeResult::failure_kind(ProbeErrorKind::Timeout, "Timeout during resolution");
         };
         match TcpStream::connect_timeout(addr, rem) {
             Ok(s) => {
                 stream = Some(s);
                 break;
             }
-            Err(e) => last_error = format!("Connect failed: {}", e),
+            Err(e) => {
+                last_kind = classify_io_error(&e);
+                last_error = format!("Connect failed: {}", e);
+            }
         }
     }
     let Some(tcp) = stream else {
-        return ProbeResult::failure(last_error);
+        return ProbeResult::failure_kind(last_kind, last_error);
     };
 
     if let Some(rem) = remaining() {
@@ -144,9 +154,9 @@ fn probe_over_plain(
     let mut stream = tcp;
     let request = build_request(host_port, path);
     if let Err(e) = stream.write_all(request.as_bytes()) {
-        return timed_or_failed(e, "HTTP write failed");
+        return timed_or_failed(e, "HTTP write failed", ProbeErrorKind::Http);
     }
-    read_response(&mut stream, started, timeout_ms, None)
+    read_response(&mut stream, started, timeout_ms, None, ProbeErrorKind::Http)
 }
 
 fn probe_over_tls(
@@ -158,7 +168,9 @@ fn probe_over_tls(
 ) -> ProbeResult {
     let server_name = match ServerName::try_from(host_of(host_port).to_string()) {
         Ok(name) => name,
-        Err(_) => return ProbeResult::failure("Invalid host name for TLS"),
+        Err(_) => {
+            return ProbeResult::failure_kind(ProbeErrorKind::Tls, "Invalid host name for TLS")
+        }
     };
 
     let verifier = Arc::new(CapturingVerifier {
@@ -174,13 +186,18 @@ fn probe_over_tls(
 
     let conn = match ClientConnection::new(Arc::new(config), server_name) {
         Ok(c) => c,
-        Err(e) => return ProbeResult::failure(format!("TLS setup failed: {}", e)),
+        Err(e) => {
+            return ProbeResult::failure_kind(
+                ProbeErrorKind::Tls,
+                format!("TLS setup failed: {}", e),
+            )
+        }
     };
 
     let mut stream = StreamOwned::new(conn, tcp);
     let request = build_request(host_port, path);
     if let Err(e) = stream.write_all(request.as_bytes()) {
-        return timed_or_failed(e, "TLS handshake failed");
+        return timed_or_failed(e, "TLS handshake failed", ProbeErrorKind::Tls);
     }
 
     // Certificate dates are known as soon as the handshake finished (the
@@ -191,7 +208,13 @@ fn probe_over_tls(
         .first()
         .and_then(|der| cert_days_left(der.as_ref()).ok());
 
-    read_response(&mut stream, started, timeout_ms, cert_days)
+    read_response(
+        &mut stream,
+        started,
+        timeout_ms,
+        cert_days,
+        ProbeErrorKind::Tls,
+    )
 }
 
 /// Reads until the status line is complete; TTFB is stamped on the first
@@ -201,6 +224,7 @@ fn read_response<S: Read>(
     started: Instant,
     timeout_ms: u32,
     cert_days: Option<i64>,
+    read_error_kind: ProbeErrorKind,
 ) -> ProbeResult {
     let mut buf = [0u8; 2048];
     let mut acc: Vec<u8> = Vec::with_capacity(2048);
@@ -228,7 +252,8 @@ fn read_response<S: Read>(
                     None,
                     cert_days,
                     Some("HTTP probe timed out".to_string()),
-                );
+                )
+                .with_error_kind(ProbeErrorKind::Timeout);
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => {
@@ -238,7 +263,8 @@ fn read_response<S: Read>(
                     None,
                     cert_days,
                     Some(format!("HTTP read failed: {}", e)),
-                );
+                )
+                .with_error_kind(read_error_kind);
             }
         }
     }
@@ -274,11 +300,11 @@ fn read_response<S: Read>(
     }
 }
 
-fn timed_or_failed(e: std::io::Error, context: &str) -> ProbeResult {
+fn timed_or_failed(e: std::io::Error, context: &str, kind: ProbeErrorKind) -> ProbeResult {
     if is_timeout(&e) {
-        ProbeResult::failure(format!("{}: timed out", context))
+        ProbeResult::failure_kind(ProbeErrorKind::Timeout, format!("{}: timed out", context))
     } else {
-        ProbeResult::failure(format!("{}: {}", context, e))
+        ProbeResult::failure_kind(kind, format!("{}: {}", context, e))
     }
 }
 
@@ -567,6 +593,7 @@ mod tests {
         assert!(!res.success);
         assert_eq!(res.http_status, Some(503));
         assert_eq!(res.error.as_deref(), Some("HTTP 503"));
+        assert_eq!(res.error_kind, Some(crate::stats::ProbeErrorKind::Http));
     }
 
     #[test]
@@ -588,6 +615,7 @@ mod tests {
             "unexpected error: {:?}",
             res.error
         );
+        assert_eq!(res.error_kind, Some(crate::stats::ProbeErrorKind::Timeout));
     }
 
     #[test]

@@ -37,6 +37,8 @@ pub const HELP: &str = concat!(
     "      --check             Validate the configuration and exit\n",
     "      --once              Probe every target once, print a snapshot, exit\n",
     "      --interval <SECS>   Snapshot interval in seconds (default: 5)\n",
+    "      --probe-concurrency <N>\n",
+    "                          Maximum probes in flight (default: 32)\n",
     "      --listen <ADDR>     Serve HTTP on ADDR, e.g. 127.0.0.1:9101\n",
     "      --output <PATH>     Atomically write the latest JSON snapshot to PATH\n",
     "      --pid-file <PATH>   Write the process id to PATH while running\n",
@@ -64,6 +66,7 @@ pub struct Cli {
     pub check: bool,
     pub quiet: bool,
     pub interval_secs: u64,
+    pub probe_concurrency: usize,
     pub listen: Option<SocketAddr>,
     pub output: Option<PathBuf>,
     pub pid_file: Option<PathBuf>,
@@ -82,6 +85,7 @@ impl Default for Cli {
             check: false,
             quiet: false,
             interval_secs: 5,
+            probe_concurrency: 32,
             listen: None,
             output: None,
             pid_file: None,
@@ -134,6 +138,16 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                     return Err("--interval must be between 1 and 3600 seconds".to_string());
                 }
                 cli.interval_secs = seconds;
+            }
+            "--probe-concurrency" => {
+                let value = take_value(&flag, inline, args, &mut index)?;
+                let limit: usize = value
+                    .parse()
+                    .map_err(|_| format!("invalid --probe-concurrency value: {value}"))?;
+                if !(1..=256).contains(&limit) {
+                    return Err("--probe-concurrency must be between 1 and 256".to_string());
+                }
+                cli.probe_concurrency = limit;
             }
             "--listen" => {
                 let value = take_value(&flag, inline, args, &mut index)?;
@@ -219,6 +233,7 @@ mod tests {
     fn defaults_are_daemon_friendly() {
         let cli = parse(&args(&["--config", "targets.json"])).expect("parse");
         assert_eq!(cli.interval_secs, 5);
+        assert_eq!(cli.probe_concurrency, 32);
         assert!(cli.listen.is_none());
         assert!(!cli.once);
         assert!(!cli.check);
@@ -232,6 +247,7 @@ mod tests {
         let cli = parse(&args(&[
             "--config=targets.json",
             "--interval=15",
+            "--probe-concurrency=16",
             "--listen=127.0.0.1:9101",
             "--output=status.json",
             "--pid-file=run.pid",
@@ -242,6 +258,7 @@ mod tests {
         ]))
         .expect("parse");
         assert_eq!(cli.interval_secs, 15);
+        assert_eq!(cli.probe_concurrency, 16);
         assert_eq!(cli.listen.expect("listen").port(), 9101);
         assert!(cli.quiet);
         assert_eq!(cli.format, OutputFormat::Text);
@@ -254,6 +271,9 @@ mod tests {
         assert!(parse(&args(&["--interval", "0"])).is_err());
         assert!(parse(&args(&["--interval", "3601"])).is_err());
         assert!(parse(&args(&["--interval", "soon"])).is_err());
+        assert!(parse(&args(&["--probe-concurrency", "0"])).is_err());
+        assert!(parse(&args(&["--probe-concurrency", "257"])).is_err());
+        assert!(parse(&args(&["--probe-concurrency", "many"])).is_err());
         assert!(parse(&args(&["--listen", "localhost"])).is_err());
         assert!(parse(&args(&["--log-level", "trace"])).is_err());
         assert!(parse(&args(&["--format", "yaml"])).is_err());

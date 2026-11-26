@@ -3,11 +3,16 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Semaphore};
 use tokio::task::JoinHandle;
 
+use crate::probe::tcp::ProbeResult;
 use crate::probe::{execute_probe, ProbeProtocol};
-use crate::stats::{TargetMetricTracker, TargetStats};
+use crate::stats::{ProbeSample, TargetMetricTracker, TargetStats};
+
+/// Bounds sockets, DNS lookups and blocking-pool slots independently of the
+/// configured target count (up to 500).
+pub const DEFAULT_PROBE_CONCURRENCY: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetConfig {
@@ -28,11 +33,18 @@ pub struct Engine {
     is_running: Arc<AtomicBool>,
     shutdown_tx: broadcast::Sender<()>,
     active_handles: Arc<RwLock<HashMap<u32, JoinHandle<()>>>>,
+    probe_semaphore: Arc<Semaphore>,
     runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl Engine {
     pub fn new() -> Result<Self, String> {
+        Self::with_probe_concurrency(DEFAULT_PROBE_CONCURRENCY)
+    }
+
+    /// Same engine with a bounded number of in-flight probes (1..=256).
+    pub fn with_probe_concurrency(limit: usize) -> Result<Self, String> {
+        let limit = limit.clamp(1, 256);
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
             .enable_all()
@@ -48,6 +60,7 @@ impl Engine {
             is_running: Arc::new(AtomicBool::new(false)),
             shutdown_tx,
             active_handles: Arc::new(RwLock::new(HashMap::new())),
+            probe_semaphore: Arc::new(Semaphore::new(limit)),
             runtime: Some(rt),
         })
     }
@@ -60,7 +73,8 @@ impl Engine {
             config.host.clone(),
             config.port,
             config.protocol.as_str().to_string(),
-        );
+        )
+        .with_schedule(config.interval_ms, config.timeout_ms);
 
         self.targets.write().insert(id, config.clone());
         self.trackers.write().insert(id, tracker);
@@ -76,6 +90,7 @@ impl Engine {
                     config,
                     self.trackers.clone(),
                     self.shutdown_tx.subscribe(),
+                    self.probe_semaphore.clone(),
                 ));
                 self.active_handles.write().insert(id, handle);
             }
@@ -112,6 +127,7 @@ impl Engine {
                     config,
                     self.trackers.clone(),
                     self.shutdown_tx.subscribe(),
+                    self.probe_semaphore.clone(),
                 ));
                 self.active_handles.write().insert(id, handle);
             }
@@ -162,6 +178,7 @@ impl Engine {
         runtime.block_on(Self::probe_once_async(
             self.targets.clone(),
             self.trackers.clone(),
+            self.probe_semaphore.clone(),
         ));
         self.get_metrics_snapshot()
     }
@@ -169,12 +186,19 @@ impl Engine {
     async fn probe_once_async(
         targets: Arc<RwLock<HashMap<u32, TargetConfig>>>,
         trackers: Arc<RwLock<HashMap<u32, TargetMetricTracker>>>,
+        semaphore: Arc<Semaphore>,
     ) {
         let configs: Vec<TargetConfig> = targets.read().values().cloned().collect();
         let mut probes = tokio::task::JoinSet::new();
         for config in configs {
+            // Acquire before spawning: dispatching 500 tasks must not create
+            // 500 concurrent sockets/DNS lookups (or starve the blocking pool).
+            let Ok(permit) = semaphore.clone().acquire_owned().await else {
+                break;
+            };
             let trackers = trackers.clone();
             probes.spawn(async move {
+                let _permit = permit;
                 let timeout = Duration::from_millis(config.timeout_ms.max(100));
                 let result = execute_probe(
                     config.protocol,
@@ -184,14 +208,7 @@ impl Engine {
                     timeout,
                 )
                 .await;
-                if let Some(tracker) = trackers.write().get_mut(&config.id) {
-                    tracker.record_sample(
-                        result.success,
-                        result.rtt_ms,
-                        result.http_status,
-                        result.cert_days_left,
-                    );
-                }
+                record_probe_result(&trackers, config.id, &result);
             });
         }
         while probes.join_next().await.is_some() {}
@@ -201,6 +218,7 @@ impl Engine {
         config: TargetConfig,
         trackers: Arc<RwLock<HashMap<u32, TargetMetricTracker>>>,
         mut shutdown_rx: broadcast::Receiver<()>,
+        semaphore: Arc<Semaphore>,
     ) {
         let period = Duration::from_millis(config.interval_ms.max(200));
         let timeout_dur = Duration::from_millis(config.timeout_ms.max(100));
@@ -230,6 +248,18 @@ impl Engine {
                 }
                 _ = ticker.tick() => {
                     tick_count = tick_count.wrapping_add(1);
+                    // Wait for a slot without ignoring shutdown: with 500
+                    // targets and a saturated semaphore, Ctrl+C must not
+                    // wait for the whole queue to drain.
+                    let permit = tokio::select! {
+                        _ = shutdown_rx.recv() => break,
+                        permit = semaphore.clone().acquire_owned() => {
+                            match permit {
+                                Ok(permit) => permit,
+                                Err(_) => break,
+                            }
+                        }
+                    };
                     let res = if config.protocol == crate::probe::ProbeProtocol::Tcp {
                         if cached_addrs.is_none() || tick_count.is_multiple_of(300) {
                             cached_addrs = crate::probe::tcp::resolve_target_addrs(
@@ -265,17 +295,29 @@ impl Engine {
                         )
                         .await
                     };
-                    if let Some(tracker) = trackers.write().get_mut(&config.id) {
-                        tracker.record_sample(
-                            res.success,
-                            res.rtt_ms,
-                            res.http_status,
-                            res.cert_days_left,
-                        );
-                    }
+                    drop(permit);
+                    record_probe_result(&trackers, config.id, &res);
                 }
             }
         }
+    }
+}
+
+fn record_probe_result(
+    trackers: &Arc<RwLock<HashMap<u32, TargetMetricTracker>>>,
+    id: u32,
+    result: &ProbeResult,
+) {
+    if let Some(tracker) = trackers.write().get_mut(&id) {
+        tracker.record_probe(ProbeSample {
+            success: result.success,
+            rtt_ms: result.rtt_ms,
+            http_status: result.http_status,
+            cert_days_left: result.cert_days_left,
+            error_kind: result.error_kind,
+            error: result.error.clone(),
+            tcp_fallback: result.tcp_fallback,
+        });
     }
 }
 

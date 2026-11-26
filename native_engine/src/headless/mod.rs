@@ -13,6 +13,7 @@ mod signal;
 mod term;
 mod text;
 
+use std::collections::HashSet;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -44,6 +45,8 @@ pub struct Summary {
     pub offline: usize,
     /// Targets whose most recent probe failed (pending targets excluded).
     pub down: usize,
+    /// Targets whose latest sample exceeded 2 × interval + timeout.
+    pub stale: usize,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -68,6 +71,7 @@ impl Snapshot {
             degraded: 0,
             offline: 0,
             down: 0,
+            stale: 0,
         };
         for target in &targets {
             match target.status {
@@ -78,6 +82,9 @@ impl Snapshot {
             }
             if target.sent_count > 0 && target.last_rtt_ms < 0.0 {
                 summary.down += 1;
+            }
+            if target.stale {
+                summary.stale += 1;
             }
         }
         Self {
@@ -192,7 +199,7 @@ fn run(cli: cli::Cli) -> i32 {
     }
 
     stats::set_alert_thresholds(loaded.offline_after, loaded.recover_after);
-    let engine = match Engine::new() {
+    let engine = match Engine::with_probe_concurrency(cli.probe_concurrency) {
         Ok(engine) => engine,
         Err(error) => {
             log::error(error);
@@ -255,13 +262,21 @@ fn run_daemon(
     state.update(engine.get_metrics_snapshot());
 
     let mut server = match cli.listen {
-        Some(address) => match http::Server::spawn(address, state.clone()) {
-            Ok(server) => Some(server),
-            Err(error) => {
-                log::error(format!("cannot listen on {address}: {error}"));
-                return EXIT_FAILURE;
+        Some(address) => {
+            if !address.ip().is_loopback() {
+                log::warn(format!(
+                    "HTTP is bound to non-loopback {address} without TLS or authentication; \
+                     bind to 127.0.0.1 and put a reverse proxy in front, or restrict access at the firewall"
+                ));
             }
-        },
+            match http::Server::spawn(address, state.clone()) {
+                Ok(server) => Some(server),
+                Err(error) => {
+                    log::error(format!("cannot listen on {address}: {error}"));
+                    return EXIT_FAILURE;
+                }
+            }
+        }
         None => None,
     };
 
@@ -293,8 +308,10 @@ fn run_daemon(
     engine.start();
     let mut next_emit = Instant::now();
     let mut stream_open = !cli.quiet;
+    let mut stale_targets = HashSet::new();
     while !signal::shutdown_requested() {
         let stats = engine.get_metrics_snapshot();
+        log_staleness(&mut stale_targets, &stats);
         state.update(stats.clone());
         if Instant::now() >= next_emit {
             let snapshot = Snapshot::new(stats);
@@ -327,6 +344,31 @@ fn run_daemon(
     }
     log::info("stopped");
     EXIT_OK
+}
+
+/// Warn once when a target goes stale, and log recovery once. This keeps a
+/// stalled probe visible in logs without repeating every scrape.
+fn log_staleness(known: &mut HashSet<u32>, stats: &[TargetStats]) {
+    let mut current = HashSet::new();
+    for target in stats {
+        if target.stale {
+            current.insert(target.id);
+            if !known.contains(&target.id) {
+                log::warn(format!(
+                    "target {} is stale: last sample {}s ago (threshold {}s)",
+                    target.name,
+                    target.last_sample_age_ms.unwrap_or(0) / 1_000,
+                    target.stale_after_ms / 1_000
+                ));
+            }
+        } else if known.contains(&target.id) {
+            log::info(format!(
+                "target {} is reporting fresh samples again",
+                target.name
+            ));
+        }
+    }
+    *known = current;
 }
 
 fn uses_text(format: cli::OutputFormat) -> bool {

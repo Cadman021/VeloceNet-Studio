@@ -81,6 +81,9 @@ Notes:
 * On Windows, use **one line** or PowerShell's backtick (`` ` ``) for
   continuation. A trailing backslash is a bash/zsh convention and is passed
   to the program as an argument by PowerShell.
+* `--probe-concurrency` bounds sockets, DNS lookups, and blocking-pool work
+  independently of the target count (up to 500). Raise it only after checking
+  file-descriptor and resolver limits; the default 32 is safe for a small VM.
 * `/readyz` returns `503` until the first probe sample exists; wait a few
   seconds and retry. `/healthz` is alive immediately.
 * `--once` exits with `3` when at least one target is down. That is a valid
@@ -140,7 +143,7 @@ and snapshots stay stable within a run.
 ```bash
 netstudio-headless --config targets.json --check
 netstudio-headless --config targets.json --once
-netstudio-headless --config targets.json --interval 15 --listen 127.0.0.1:9101 --output /var/lib/netstudio/status.json
+netstudio-headless --config targets.json --interval 15 --probe-concurrency 32 --listen 127.0.0.1:9101 --output /var/lib/netstudio/status.json
 ```
 
 | Flag | Meaning |
@@ -149,6 +152,7 @@ netstudio-headless --config targets.json --interval 15 --listen 127.0.0.1:9101 -
 | `--check` | Validate the file and exit |
 | `--once` | Probe every target once, print a snapshot, exit |
 | `--interval <SECS>` | Snapshot interval, 1–3600 (default 5) |
+| `--probe-concurrency <N>` | Maximum probes in flight, 1–256 (default 32) |
 | `--listen <IP:PORT>` | Enable HTTP (disabled by default) |
 | `--output <PATH>` | Atomically replace this file with the latest snapshot |
 | `--pid-file <PATH>` | Write the process id while running |
@@ -181,7 +185,7 @@ STATUS    TARGET                PROBE                   RTT     JITTER     LOSS 
 ------------------------------------------------------------------------------------------
 ONLINE    Cloudflare DNS        ICMP 1.1.1.1:53     0.72 ms    0.00 ms     0.0%        1/1
 ONLINE    Cloudflare DNS (TCP)  TCP 1.1.1.1:53      1.26 ms    6.18 ms     0.0%        1/1
-2 online  |  0 degraded  |  0 offline  |  0 pending  |  0 down
+2 online  |  0 degraded  |  0 offline  |  0 pending  |  0 stale  |  0 down
 ```
 
 Statuses are green/yellow/red/dim, headers and separators are dim, and
@@ -198,14 +202,33 @@ and `--no-color` disable them. Use `--format json` for the machine form
   "version": "1.6.0",
   "summary": {
     "targets": 2, "pending": 0, "online": 1, "degraded": 0,
-    "offline": 1, "down": 1
+    "offline": 1, "down": 1, "stale": 0
   },
   "targets": [ /* TargetStats, identical to the app/FFI JSON */ ]
 }
 ```
 
 `summary.down` counts targets whose most recent probe failed. A target that
-has not been probed yet is `pending`, not down.
+has not been probed yet is `pending`, not down. `summary.stale` counts
+targets whose latest sample is older than `2 × interval + timeout`; a stalled
+probe therefore stops looking fresh even though the daemon is still running.
+
+Each target also carries the reason for its last failure:
+
+| Field | Meaning |
+|---|---|
+| `last_error` | Short, single-line, sanitized reason (max 160 chars), cleared on success |
+| `last_error_kind` | `dns`, `timeout`, `refused`, `unreachable`, `icmp_unavailable`, `tls`, `http`, or `other` |
+| `tcp_fallback` | `true` when ICMP was unavailable and the probe used TCP |
+| `last_sample_age_ms` | Age of the latest sample; `null` before the first one |
+| `stale` | `true` after `stale_after_ms` without a fresh sample |
+| `stale_after_ms` | This target's `2 × interval + timeout` threshold |
+
+The text table adds a `DETAIL` column only when at least one target has an
+error, a fallback, or a stale sample; the compact table for healthy targets is
+unchanged. Stale targets are also logged once when they cross the threshold
+and once when samples resume, so a dead prober does not repeat a warning on
+every scrape.
 
 ### Daemon lifecycle
 
@@ -251,6 +274,9 @@ WantedBy=multi-user.target
 HTTP is off unless `--listen` is passed. Bind to loopback and put an
 authenticating reverse proxy in front of it if the metrics must be reachable
 from another host; the built-in server has no TLS and no authentication.
+Binding to a non-loopback address logs an explicit warning at startup, because
+anyone who can reach the port can read target names, hosts, and errors.
+Network access should be restricted by the firewall or the proxy.
 
 | Path | Response |
 |---|---|
@@ -261,8 +287,12 @@ from another host; the built-in server has no TLS and no authentication.
 | `/api/v1/status` | The latest snapshot as JSON |
 
 Only `GET` and `HEAD` are allowed (`405` otherwise). Unknown paths return
-`404`. Requests are capped at 8 KiB and the server closes each connection
-after one response.
+`404`. The request line and headers are capped at 8 KiB: oversized requests
+get `413`, malformed or incomplete ones get `400`, and a request that is not
+finished within 3 seconds gets `408`. Connections are served by a fixed pool
+of 8 workers with a 16-connection queue; excess connections get `503` instead
+of creating threads, and every worker is joined during shutdown. Each
+connection is closed after one response.
 
 ### Prometheus metrics
 
@@ -284,17 +314,34 @@ All target metrics carry the labels
 | `netstudio_target_rtt_max_ms` | gauge | Maximum successful RTT |
 | `netstudio_target_rtt_avg_ms` | gauge | Mean successful RTT |
 | `netstudio_target_jitter_ms` | gauge | RFC 3550 jitter estimate |
-| `netstudio_target_last_check_timestamp_seconds` | gauge | Unix time of the latest sample |
+| `netstudio_target_last_check_timestamp_seconds` | gauge | Unix time when the latest probe sample completed (does not advance on scrapes) |
+| `netstudio_target_last_sample_age_seconds` | gauge | Age of the latest sample; `-1` before the first sample |
+| `netstudio_target_stale` | gauge | `1` when no fresh sample arrived within `2 × interval + timeout` |
+| `netstudio_target_tcp_fallback` | gauge | `1` when the latest ICMP probe used TCP fallback |
+| `netstudio_target_error_info` | gauge | `1` with a `kind` label for the latest failure; one series per failed target |
 | `netstudio_target_http_status_code` | gauge | Latest HTTP code (HTTP/HTTPS only) |
 | `netstudio_target_cert_days_left` | gauge | TLS certificate days left (HTTPS only) |
 
-Example alert:
+Example alerts:
 
 ```yaml
 - alert: NetStudioTargetDown
   expr: netstudio_target_up == 0 and netstudio_target_sent_total > 0
   for: 2m
+
+- alert: NetStudioProbeStalled
+  expr: netstudio_target_stale == 1
+  for: 1m
+
+- alert: NetStudioDNSFailures
+  expr: netstudio_target_error_info{kind="dns"} == 1
+  for: 5m
 ```
+
+`last_error` itself is deliberately not a metric label: it is unbounded
+cardinality and may contain attacker-controlled text. Use
+`netstudio_target_error_info{kind=...}` for alerting and read the sanitized
+message from `/api/v1/status` or the snapshot file.
 
 Note that the engine has no persistence: counters and the 40-sample RTT
 window reset when the process restarts. Uptime history and the alert log
@@ -303,7 +350,8 @@ remain desktop-app features.
 ## What is not included
 
 This first headless release covers the Ping Matrix engine (ICMP/TCP/HTTP/HTTPS,
-statuses, RTT/jitter/loss, HTTP status, TLS expiry) and its HTTP surface.
+statuses, RTT/jitter/loss, HTTP status, TLS expiry, failure reasons, and
+staleness) and its HTTP surface.
 Desktop-only features are intentionally absent:
 
 * traceroute/MTR, bandwidth, Warp, port scan and DNS lookup;

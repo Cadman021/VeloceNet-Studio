@@ -12,6 +12,7 @@ const STATUS_WIDTH: usize = 8;
 const MAX_NAME_WIDTH: usize = 22;
 const MAX_PROBE_WIDTH: usize = 28;
 const HTTP_WIDTH: usize = 16;
+const DETAIL_WIDTH: usize = 34;
 
 pub fn render(snapshot: &Snapshot, style: Style) -> String {
     let show_http = snapshot.targets.iter().any(|target| {
@@ -19,6 +20,10 @@ pub fn render(snapshot: &Snapshot, style: Style) -> String {
             || target.cert_days_left.is_some()
             || matches!(target.protocol.as_str(), "HTTP" | "HTTPS")
     });
+    let show_detail = snapshot
+        .targets
+        .iter()
+        .any(|target| target.last_error.is_some() || target.tcp_fallback || target.stale);
     let name_width = snapshot
         .targets
         .iter()
@@ -39,6 +44,9 @@ pub fn render(snapshot: &Snapshot, style: Style) -> String {
     if show_http {
         table_width += 2 + HTTP_WIDTH;
     }
+    if show_detail {
+        table_width += 2 + DETAIL_WIDTH;
+    }
 
     let mut out = String::new();
     out.push_str(&style.dim(&"-".repeat(table_width)));
@@ -57,6 +65,9 @@ pub fn render(snapshot: &Snapshot, style: Style) -> String {
     )));
     if show_http {
         out.push_str(&format!("  {:>HTTP_WIDTH$}", "HTTP/CERT"));
+    }
+    if show_detail {
+        out.push_str(&format!("  {:<DETAIL_WIDTH$}", "DETAIL"));
     }
     out.push('\n');
     out.push_str(&style.dim(&"-".repeat(table_width)));
@@ -82,6 +93,10 @@ pub fn render(snapshot: &Snapshot, style: Style) -> String {
         if show_http {
             out.push_str("  ");
             out.push_str(&http_cell(target, style));
+        }
+        if show_detail {
+            out.push_str("  ");
+            out.push_str(&detail_cell(target, style));
         }
         out.push('\n');
     }
@@ -175,6 +190,57 @@ fn http_cell(target: &TargetStats, style: Style) -> String {
     )
 }
 
+fn age_text(age_ms: Option<u64>) -> String {
+    let seconds = age_ms.unwrap_or(0) / 1_000;
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3_600 {
+        format!("{}m{:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h{:02}m", seconds / 3_600, (seconds % 3_600) / 60)
+    }
+}
+
+fn detail_text(target: &TargetStats) -> Option<String> {
+    let mut notes = Vec::new();
+    if target.stale {
+        notes.push(format!("stale {}", age_text(target.last_sample_age_ms)));
+    }
+    if target.tcp_fallback {
+        notes.push("tcp fallback".to_string());
+    }
+    if let Some(error) = &target.last_error {
+        let kind = target
+            .last_error_kind
+            .map(|kind| kind.as_str())
+            .unwrap_or("error");
+        notes.push(format!("{kind}: {error}"));
+    }
+    if notes.is_empty() {
+        None
+    } else {
+        Some(notes.join(" | "))
+    }
+}
+
+fn detail_cell(target: &TargetStats, style: Style) -> String {
+    let Some(raw) = detail_text(target) else {
+        return " ".repeat(DETAIL_WIDTH);
+    };
+    let clipped = clip(&raw, DETAIL_WIDTH);
+    let painted = if target.last_error.is_some() {
+        style.red(&clipped)
+    } else if target.stale || target.tcp_fallback {
+        style.yellow(&clipped)
+    } else {
+        style.dim(&clipped)
+    };
+    format!(
+        "{painted}{}",
+        " ".repeat(DETAIL_WIDTH.saturating_sub(clipped.chars().count()))
+    )
+}
+
 fn summary_line(snapshot: &Snapshot, style: Style) -> String {
     let summary = &snapshot.summary;
     let online = if summary.online > 0 {
@@ -193,12 +259,17 @@ fn summary_line(snapshot: &Snapshot, style: Style) -> String {
         style.dim("0 offline")
     };
     let pending = style.dim(&format!("{} pending", summary.pending));
+    let stale = if summary.stale > 0 {
+        style.yellow(&format!("{} stale", summary.stale))
+    } else {
+        style.dim("0 stale")
+    };
     let down = if summary.down > 0 {
         style.red(&format!("{} down", summary.down))
     } else {
         style.green("0 down")
     };
-    [online, degraded, offline, pending, down].join("  |  ")
+    [online, degraded, offline, pending, stale, down].join("  |  ")
 }
 
 fn clip(value: &str, width: usize) -> String {
@@ -246,6 +317,12 @@ mod tests {
             last_checked_epoch_ms: 0,
             http_status: None,
             cert_days_left: None,
+            last_error: None,
+            last_error_kind: None,
+            tcp_fallback: false,
+            stale: false,
+            last_sample_age_ms: Some(0),
+            stale_after_ms: 3_500,
         }
     }
 
@@ -285,6 +362,21 @@ mod tests {
         let text = render(&Snapshot::new(vec![stats]), Style::plain());
         assert!(text.contains("HTTP/CERT"));
         assert!(text.contains("200 | 42d"));
+    }
+
+    #[test]
+    fn detail_column_shows_error_kind_and_staleness() {
+        let mut failed = target(1, "DNS", TargetStatus::Offline, 3, 0, -1.0);
+        failed.last_error = Some("DNS resolution failed: no such host".to_string());
+        failed.last_error_kind = Some(crate::stats::ProbeErrorKind::Dns);
+        let mut stale = target(2, "Old", TargetStatus::Online, 1, 1, 5.0);
+        stale.stale = true;
+        stale.last_sample_age_ms = Some(12_000);
+        let text = render(&Snapshot::new(vec![failed, stale]), Style::plain());
+        assert!(text.contains("DETAIL"));
+        assert!(text.contains("dns: DNS resolution failed"));
+        assert!(text.contains("stale 12s"));
+        assert!(text.contains("1 stale"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 #[cfg(windows)]
 pub mod imp {
     use super::super::tcp::ProbeResult;
+    use crate::stats::ProbeErrorKind;
     use std::ffi::c_void;
     use std::mem::size_of;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
@@ -13,6 +14,9 @@ pub mod imp {
     use windows_sys::Win32::Networking::WinSock::{
         AF_INET6, IN6_ADDR, IN6_ADDR_0, SOCKADDR_IN6, SOCKADDR_IN6_0,
     };
+
+    /// IP_STATUS code returned by IcmpSendEcho when no reply arrived.
+    const IP_REQ_TIMED_OUT: u32 = 11010;
 
     #[repr(C)]
     struct IcmpEchoReply {
@@ -40,14 +44,17 @@ pub mod imp {
         let addrs: Vec<IpAddr> = match with_port(host, 0).to_socket_addrs() {
             Ok(iter) => iter.map(|sa| sa.ip()).collect(),
             Err(e) => {
-                return Err(ProbeResult::failure(format!(
-                    "DNS resolution failed: {}",
-                    e
-                )))
+                return Err(ProbeResult::failure_kind(
+                    ProbeErrorKind::Dns,
+                    format!("DNS resolution failed: {}", e),
+                ))
             }
         };
         if addrs.is_empty() {
-            return Err(ProbeResult::failure("No address resolved for host"));
+            return Err(ProbeResult::failure_kind(
+                ProbeErrorKind::Dns,
+                "No address resolved for host",
+            ));
         }
         // Preserve the historical IPv4 preference; fall back to IPv6 only
         // when the name has no A record (or the literal itself is v6).
@@ -111,10 +118,15 @@ pub mod imp {
                     };
                     ProbeResult::success(rtt)
                 } else {
-                    ProbeResult::failure(format!("ICMP error status: {}", reply.status))
+                    let kind = if reply.status == IP_REQ_TIMED_OUT {
+                        ProbeErrorKind::Timeout
+                    } else {
+                        ProbeErrorKind::Unreachable
+                    };
+                    ProbeResult::failure_kind(kind, format!("ICMP error status: {}", reply.status))
                 }
             } else {
-                ProbeResult::failure("ICMP request timed out")
+                ProbeResult::failure_kind(ProbeErrorKind::Timeout, "ICMP request timed out")
             }
         }
     }
@@ -182,10 +194,18 @@ pub mod imp {
                     };
                     ProbeResult::success(rtt)
                 } else {
-                    ProbeResult::failure(format!("ICMPv6 error status: {}", reply.Status))
+                    let kind = if reply.Status == IP_REQ_TIMED_OUT {
+                        ProbeErrorKind::Timeout
+                    } else {
+                        ProbeErrorKind::Unreachable
+                    };
+                    ProbeResult::failure_kind(
+                        kind,
+                        format!("ICMPv6 error status: {}", reply.Status),
+                    )
                 }
             } else {
-                ProbeResult::failure("ICMPv6 request timed out")
+                ProbeResult::failure_kind(ProbeErrorKind::Timeout, "ICMPv6 request timed out")
             }
         }
     }

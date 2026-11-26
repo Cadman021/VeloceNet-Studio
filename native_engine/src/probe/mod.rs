@@ -88,7 +88,9 @@ pub async fn execute_probe(
             // corrupts loss/RTT accounting and doubles the effective
             // timeout, which is why Windows already had no silent fallback.
             if probe_result.icmp_unavailable && port > 0 {
-                return probe_tcp(host, port, timeout_duration).await;
+                return probe_tcp(host, port, timeout_duration)
+                    .await
+                    .with_tcp_fallback();
             }
             probe_result
         }

@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const MAX_HISTORY_SAMPLES: usize = 40;
+const MAX_ERROR_CHARS: usize = 160;
 
 /// Process-wide alert thresholds (defaults match the previous hardcoded
 /// behavior). Configured from Dart via `netstudio_set_alert_thresholds`;
@@ -27,6 +28,103 @@ pub enum TargetStatus {
     Online,
     Degraded,
     Offline,
+}
+
+/// Why the latest probe failed. Kept as a small closed set so operators (and
+/// alert rules) can distinguish DNS, routing and application failures without
+/// parsing human-readable error strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeErrorKind {
+    Dns,
+    Timeout,
+    Refused,
+    Unreachable,
+    IcmpUnavailable,
+    Tls,
+    Http,
+    Other,
+}
+
+impl ProbeErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dns => "dns",
+            Self::Timeout => "timeout",
+            Self::Refused => "refused",
+            Self::Unreachable => "unreachable",
+            Self::IcmpUnavailable => "icmp_unavailable",
+            Self::Tls => "tls",
+            Self::Http => "http",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// One probe result as handed to the tracker. Keeping this separate from
+/// ProbeResult lets stats stay independent of the async probe module.
+#[derive(Debug, Clone)]
+pub struct ProbeSample {
+    pub success: bool,
+    pub rtt_ms: f64,
+    pub http_status: Option<u16>,
+    pub cert_days_left: Option<i64>,
+    pub error_kind: Option<ProbeErrorKind>,
+    pub error: Option<String>,
+    pub tcp_fallback: bool,
+}
+
+impl ProbeSample {
+    pub fn success(rtt_ms: f64, http_status: Option<u16>, cert_days_left: Option<i64>) -> Self {
+        Self {
+            success: true,
+            rtt_ms,
+            http_status,
+            cert_days_left,
+            error_kind: None,
+            error: None,
+            tcp_fallback: false,
+        }
+    }
+}
+
+/// Shortens and flattens a probe error before it leaves the engine: no
+/// newlines/control characters, no multi-line stack traces, and a hard cap so
+/// an OS message can never bloat every status scrape. Secrets are never part
+/// of these messages (probe errors contain host/port and OS text only).
+pub fn sanitize_error(message: &str) -> String {
+    let flattened: String = message
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    let mut out = String::with_capacity(flattened.len().min(MAX_ERROR_CHARS));
+    for (index, word) in flattened.split_whitespace().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    if out.is_empty() {
+        return "probe failed".to_string();
+    }
+    if out.chars().count() > MAX_ERROR_CHARS {
+        out = out.chars().take(MAX_ERROR_CHARS - 3).collect();
+        out.push_str("...");
+    }
+    out
+}
+
+pub(crate) fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +152,19 @@ pub struct TargetStats {
     /// HTTPS only: days until the peer certificate expires (sticky — the
     /// last known value survives probe failures; negative = expired).
     pub cert_days_left: Option<i64>,
+    /// Sanitized reason for the latest failed sample (cleared on success).
+    pub last_error: Option<String>,
+    /// Machine-readable category for last_error.
+    pub last_error_kind: Option<ProbeErrorKind>,
+    /// True when the latest ICMP probe fell back to TCP because the OS
+    /// refused native ICMP.
+    pub tcp_fallback: bool,
+    /// True when no fresh sample arrived within 2 × interval + timeout.
+    pub stale: bool,
+    /// Age of the latest sample in milliseconds (None before the first one).
+    pub last_sample_age_ms: Option<u64>,
+    /// Age at which this target is considered stale.
+    pub stale_after_ms: u64,
 }
 
 pub struct TargetMetricTracker {
@@ -80,6 +191,12 @@ pub struct TargetMetricTracker {
     was_offline: bool,
     last_http_status: Option<u16>,
     cert_days_left: Option<i64>,
+    interval_ms: u64,
+    timeout_ms: u64,
+    last_checked_epoch_ms: u64,
+    last_error: Option<String>,
+    last_error_kind: Option<ProbeErrorKind>,
+    tcp_fallback: bool,
 }
 
 impl TargetMetricTracker {
@@ -105,9 +222,26 @@ impl TargetMetricTracker {
             was_offline: false,
             last_http_status: None,
             cert_days_left: None,
+            interval_ms: 1_000,
+            timeout_ms: 1_500,
+            last_checked_epoch_ms: 0,
+            last_error: None,
+            last_error_kind: None,
+            tcp_fallback: false,
         }
     }
 
+    /// Same as Self::new, but with the target's real schedule so staleness
+    /// is evaluated against 2 × interval + timeout.
+    pub fn with_schedule(mut self, interval_ms: u64, timeout_ms: u64) -> Self {
+        self.interval_ms = interval_ms.max(1);
+        self.timeout_ms = timeout_ms.max(1);
+        self
+    }
+
+    /// Backwards-compatible convenience wrapper used by tests and callers
+    /// that only have a boolean outcome. Engine call sites use
+    /// record_probe so the failure reason and ICMP fallback are preserved.
     pub fn record_sample(
         &mut self,
         success: bool,
@@ -115,13 +249,52 @@ impl TargetMetricTracker {
         http_status: Option<u16>,
         cert_days_left: Option<i64>,
     ) {
+        self.record_probe(ProbeSample {
+            success,
+            rtt_ms,
+            http_status,
+            cert_days_left,
+            error_kind: None,
+            error: None,
+            tcp_fallback: false,
+        });
+    }
+
+    pub fn record_probe(&mut self, sample: ProbeSample) {
+        self.record_probe_at(sample, now_epoch_ms());
+    }
+
+    pub(crate) fn record_probe_at(&mut self, sample: ProbeSample, sampled_at_ms: u64) {
+        let ProbeSample {
+            success,
+            rtt_ms,
+            http_status,
+            cert_days_left,
+            error_kind,
+            error,
+            tcp_fallback,
+        } = sample;
+
         self.sent_count += 1;
+        // This is the sample's own completion timestamp. snapshot() must
+        // never refresh it, otherwise a stalled probe would look fresh to
+        // every scrape.
+        self.last_checked_epoch_ms = sampled_at_ms;
+        self.tcp_fallback = tcp_fallback;
 
         // Status is per-sample (a failed probe clears it); cert expiry is
         // sticky — the certificate does not vanish when a probe misses.
         self.last_http_status = http_status;
         if cert_days_left.is_some() {
             self.cert_days_left = cert_days_left;
+        }
+
+        if success {
+            self.last_error = None;
+            self.last_error_kind = None;
+        } else {
+            self.last_error_kind = Some(error_kind.unwrap_or(ProbeErrorKind::Other));
+            self.last_error = Some(sanitize_error(error.as_deref().unwrap_or("probe failed")));
         }
 
         if success {
@@ -226,10 +399,19 @@ impl TargetMetricTracker {
             TargetStatus::Online
         };
 
-        let epoch_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        // Read the timestamp written by record_probe; do not stamp it here.
+        // Staleness is the one value that legitimately depends on "now":
+        // the sample time itself must stay fixed across every scrape.
+        let stale_after_ms = self
+            .interval_ms
+            .saturating_mul(2)
+            .saturating_add(self.timeout_ms);
+        let last_sample_age_ms = if self.last_checked_epoch_ms == 0 {
+            None
+        } else {
+            Some(now_epoch_ms().saturating_sub(self.last_checked_epoch_ms))
+        };
+        let stale = last_sample_age_ms.is_some_and(|age| age > stale_after_ms);
 
         TargetStats {
             id: self.id,
@@ -248,9 +430,81 @@ impl TargetMetricTracker {
             avg_rtt_ms,
             jitter_ms: self.jitter_ms,
             history: self.recent_rtts.iter().copied().collect(),
-            last_checked_epoch_ms: epoch_ms,
+            last_checked_epoch_ms: self.last_checked_epoch_ms,
             http_status: self.last_http_status,
             cert_days_left: self.cert_days_left,
+            last_error: self.last_error.clone(),
+            last_error_kind: self.last_error_kind,
+            tcp_fallback: self.tcp_fallback,
+            stale,
+            last_sample_age_ms,
+            stale_after_ms,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    fn tracker() -> TargetMetricTracker {
+        TargetMetricTracker::new(
+            1,
+            "Example".to_string(),
+            "example.com".to_string(),
+            443,
+            "HTTPS".to_string(),
+        )
+        .with_schedule(1_000, 500)
+    }
+
+    #[test]
+    fn snapshot_reads_the_sample_timestamp_instead_of_refreshing_it() {
+        let mut tracker = tracker();
+        tracker.record_probe_at(ProbeSample::success(12.0, Some(200), None), 1_000);
+        let first = tracker.snapshot();
+        thread::sleep(Duration::from_millis(20));
+        let second = tracker.snapshot();
+
+        assert_eq!(first.last_checked_epoch_ms, 1_000);
+        assert_eq!(second.last_checked_epoch_ms, 1_000);
+        assert!(second.last_sample_age_ms.unwrap() >= 20);
+        assert!(second.stale);
+    }
+
+    #[test]
+    fn failures_keep_sanitized_reason_kind_and_fallback() {
+        let mut tracker = tracker();
+        tracker.record_probe(ProbeSample {
+            success: false,
+            rtt_ms: -1.0,
+            http_status: None,
+            cert_days_left: None,
+            error_kind: Some(ProbeErrorKind::Dns),
+            error: Some("DNS \n resolution\t failed ".to_string()),
+            tcp_fallback: true,
+        });
+        let stats = tracker.snapshot();
+        assert_eq!(stats.last_error.as_deref(), Some("DNS resolution failed"));
+        assert_eq!(stats.last_error_kind, Some(ProbeErrorKind::Dns));
+        assert!(stats.tcp_fallback);
+
+        tracker.record_probe(ProbeSample::success(4.0, None, None));
+        let recovered = tracker.snapshot();
+        assert!(recovered.last_error.is_none());
+        assert!(recovered.last_error_kind.is_none());
+        assert!(!recovered.tcp_fallback);
+    }
+
+    #[test]
+    fn sanitize_error_caps_length_and_rejects_control_characters() {
+        let noisy = format!("first\nsecond\u{0}{}", "x".repeat(300));
+        let clean = sanitize_error(&noisy);
+        assert_eq!(clean.chars().count(), MAX_ERROR_CHARS);
+        assert!(clean.starts_with("first second xxx"));
+        assert!(clean.ends_with("..."));
+        assert_eq!(sanitize_error("\n\t "), "probe failed");
     }
 }

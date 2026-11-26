@@ -90,6 +90,19 @@ fn once_probes_an_open_port_and_writes_the_snapshot_file() {
     assert_eq!(snapshot["summary"]["down"], 0);
     assert_eq!(snapshot["targets"][0]["sent_count"], 1);
     assert_eq!(snapshot["targets"][0]["received_count"], 1);
+    assert!(
+        snapshot["targets"][0]["last_checked_epoch_ms"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        snapshot["targets"][0]["last_sample_age_ms"]
+            .as_u64()
+            .unwrap()
+            < 5_000
+    );
+    assert_eq!(snapshot["summary"]["stale"], 0);
 
     let on_disk: Value =
         serde_json::from_str(&fs::read_to_string(&output_path).expect("read output"))
@@ -176,6 +189,56 @@ fn once_exits_three_when_a_target_is_down() {
     let snapshot = parse_snapshot(&output.stdout);
     assert_eq!(snapshot["summary"]["down"], 1);
     assert_eq!(snapshot["targets"][0]["last_rtt_ms"], -1.0);
+    let kind = snapshot["targets"][0]["last_error_kind"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(matches!(kind, "refused" | "timeout"), "kind: {kind}");
+    assert!(!snapshot["targets"][0]["last_error"]
+        .as_str()
+        .unwrap_or_default()
+        .is_empty());
+    assert_eq!(snapshot["targets"][0]["tcp_fallback"], false);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn once_text_shows_why_a_target_is_down() {
+    let port = {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        listener.local_addr().expect("addr").port()
+    };
+    let dir = temp_dir();
+    let config = write_config(
+        &dir,
+        serde_json::json!({
+            "name": "closed port",
+            "host": "127.0.0.1",
+            "port": port,
+            "protocol": "TCP",
+            "timeout_ms": 300
+        }),
+    );
+    let output = run(&[
+        "--config".as_ref(),
+        config.as_os_str(),
+        "--once".as_ref(),
+        "--format=text".as_ref(),
+        "--no-color".as_ref(),
+        "--log-level=error".as_ref(),
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("DETAIL"));
+    assert!(
+        text.contains("refused:") || text.contains("timeout:"),
+        "{text}"
+    );
+    assert!(text.contains("closed port"));
     let _ = fs::remove_dir_all(&dir);
 }
 
