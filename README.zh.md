@@ -56,7 +56,7 @@
 - **系统托盘** — 关闭窗口时最小化到托盘，监控继续运行；显示/隐藏/退出菜单，可在设置中关闭。
 - **更新检查** — 每日轮询 GitHub Releases，启动时弹窗提示 (下载/稍后，每个版本仅一次)，设置中可手动检查。
 - **弹性引擎** — 如果 Rust 的 `.dll`/`.so` 尚未构建，程序会自动使用 Dart 备用探测器，保证界面始终可用。
-- **无头守护进程** — 同一引擎的独立 `netstudio-headless` 二进制，面向服务器：读取应用的 JSON 目标、输出 NDJSON 快照、原子写入状态文件，并提供 `/healthz`、`/readyz`、`/metrics` (Prometheus) 与 `/api/v1/status`，无需 Flutter。详见 [docs/headless.md](docs/headless.md)。
+- **无头守护进程** — 同一引擎的独立 `netstudio-headless` 二进制，面向服务器：读取应用的 JSON 目标、在终端输出彩色表格（管道输出时使用 NDJSON）、原子写入状态文件，并提供 `/healthz`、`/readyz`、`/metrics` (Prometheus) 与 `/api/v1/status`，无需 Flutter。详见 [docs/headless.md](docs/headless.md)。
 
 ## 下载 (v1.6.0)
 
@@ -150,4 +150,4 @@ Linux 构建桌面通知插件需要 `libnotify-dev`（例如 `sudo apt install 
 
 ## 更新日志与路线图
 
-见 [CHANGELOG.md](CHANGELOG.md)。近期想法：Prometheus 导出端点、真实的 per-process 统计 (ETW)、headless/CLI 守护进程、Linux/macOS 安全密钥存储 (libsecret/Keychain)，以及更多网络工具 (测速、DNS 基准、TLS 检查器)。
+见 [CHANGELOG.md](CHANGELOG.md)。近期想法：Prometheus 导出端点、真实的 per-process 统计 (ETW)、Linux/macOS 安全密钥存储 (libsecret/Keychain)，以及更多网络工具 (测速、DNS 基准、TLS 检查器)。

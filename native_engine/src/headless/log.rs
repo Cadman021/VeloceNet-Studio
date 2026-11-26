@@ -44,14 +44,24 @@ fn enabled(level: Level) -> bool {
 }
 
 pub fn log(level: Level, message: impl AsRef<str>) {
-    if enabled(level) {
-        eprintln!(
-            "{} {:<5} {}",
-            rfc3339_now(),
-            level.label(),
-            message.as_ref()
-        );
+    if !enabled(level) {
+        return;
     }
+    let style = super::term::stderr_style();
+    let label = level.label();
+    let painted = match level {
+        Level::Error => style.red(label),
+        Level::Warn => style.yellow(label),
+        Level::Info => style.cyan(label),
+        Level::Debug => style.dim(label),
+    };
+    eprintln!(
+        "{} {}{} {}",
+        style.dim(&rfc3339_now()),
+        painted,
+        " ".repeat(5usize.saturating_sub(label.len())),
+        message.as_ref()
+    );
 }
 
 pub fn error(message: impl AsRef<str>) {

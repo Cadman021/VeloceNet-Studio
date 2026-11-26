@@ -7,7 +7,7 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **Headless / CLI mode**: a standalone `netstudio-headless` binary built from the same Rust engine, for servers and containers. It reads the app's JSON export (full envelope or bare target array), supports `--check`, `--once`, `--interval`, `--output` (atomic snapshot file), `--pid-file`, `--quiet` and `--log-level`, streams NDJSON snapshots, and optionally serves `/healthz`, `/readyz`, `/metrics` (Prometheus) and `/api/v1/status`. Handles SIGINT/SIGTERM gracefully and returns `0`/`3` from `--once` depending on target health. No new crates; documented in [docs/headless.md](docs/headless.md).
+- **Headless / CLI mode**: a standalone `netstudio-headless` binary built from the same Rust engine, for servers and containers. It reads the app's JSON export (full envelope or bare target array), supports `--check`, `--once`, `--interval`, `--output` (atomic snapshot file), `--pid-file`, `--quiet`, `--format`, `--color` and `--log-level`, streams color-coded tables on a terminal (NDJSON when piped), and optionally serves `/healthz`, `/readyz`, `/metrics` (Prometheus) and `/api/v1/status`. Handles SIGINT/SIGTERM gracefully and returns `0`/`3` from `--once` depending on target health. No new crates; documented in [docs/headless.md](docs/headless.md).
 
 ### Fixed
 - The Add Server dialog now exposes the per-target timeout next to the interval field, with `100–10000` ms validation matching `NativeBindings.clampTimeout`; the dialog title also ellipsizes instead of overflowing on narrow or localized layouts ([#2](https://github.com/Cadman021/VeloceNet-Studio/issues/2)).

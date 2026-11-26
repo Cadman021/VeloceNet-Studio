@@ -84,7 +84,8 @@ Notes:
 * `/readyz` returns `503` until the first probe sample exists; wait a few
   seconds and retry. `/healthz` is alive immediately.
 * `--once` exits with `3` when at least one target is down. That is a valid
-  test result, not a crash; the JSON snapshot is still printed.
+  test result, not a crash; the snapshot is still printed. Add `--format json`
+  if you need machine-readable output in a terminal.
 * Press `Ctrl+C` to stop the daemon gracefully.
 * `docs/examples/targets.json` uses `1.1.1.1` over ICMP and TCP/53, so it
   exercises two probe types without DNS. Edit it or export your own targets
@@ -146,26 +147,47 @@ netstudio-headless --config targets.json --interval 15 --listen 127.0.0.1:9101 -
 |---|---|
 | `-c`, `--config <PATH>` | Target file (required for run/check/once) |
 | `--check` | Validate the file and exit |
-| `--once` | Probe every target once, print one JSON snapshot, exit |
+| `--once` | Probe every target once, print a snapshot, exit |
 | `--interval <SECS>` | Snapshot interval, 1–3600 (default 5) |
 | `--listen <IP:PORT>` | Enable HTTP (disabled by default) |
 | `--output <PATH>` | Atomically replace this file with the latest snapshot |
 | `--pid-file <PATH>` | Write the process id while running |
-| `-q`, `--quiet` | Do not stream NDJSON snapshots to stdout |
+| `-q`, `--quiet` | Do not stream snapshots to stdout |
+| `--format <MODE>` | `auto` (default), `json` (NDJSON/pretty JSON), `text` (human table) |
+| `--color <WHEN>` | `auto` (default), `always`, `never`; `--no-color` is an alias for `never` |
 | `--log-level <LEVEL>` | `error`, `warn`, `info` (default), `debug` |
 | `-h`, `--help` | Usage |
 | `-V`, `--version` | Version |
 
-`--once` prints pretty JSON to stdout (`--quiet` does not suppress it) and
-returns:
+On a terminal, `--once` prints a human-readable table; when stdout is piped
+or redirected it prints pretty JSON so scripts keep working. Use
+`--format json` or `--format text` to force either form. `--quiet` does not
+suppress the `--once` result. It returns:
 
 * `0` — every probed target answered;
 * `3` — at least one target is down;
 * `2` — configuration/CLI error;
 * `1` — runtime failure (for example the output directory does not exist).
 
-The daemon streams one compact JSON snapshot per line (NDJSON) to stdout
-unless `--quiet` is given. Each line has the same shape:
+The daemon streams a snapshot to stdout unless `--quiet` is given. `auto`
+chooses a color-coded table on a terminal and compact NDJSON when stdout
+is piped; `--format` overrides that choice. The JSON/NDJSON never contains
+ANSI escape codes. A terminal snapshot looks like:
+
+```text
+------------------------------------------------------------------------------------------
+NetStudio Headless v1.6.0  2026-01-01T00:00:00.000Z
+STATUS    TARGET                PROBE                   RTT     JITTER     LOSS    OK/SENT
+------------------------------------------------------------------------------------------
+ONLINE    Cloudflare DNS        ICMP 1.1.1.1:53     0.72 ms    0.00 ms     0.0%        1/1
+ONLINE    Cloudflare DNS (TCP)  TCP 1.1.1.1:53      1.26 ms    6.18 ms     0.0%        1/1
+2 online  |  0 degraded  |  0 offline  |  0 pending  |  0 down
+```
+
+Statuses are green/yellow/red/dim, headers and separators are dim, and
+`--color always` keeps the colors when the output is redirected. `NO_COLOR`
+and `--no-color` disable them. Use `--format json` for the machine form
+(pretty JSON for `--once`, compact NDJSON for the daemon):
 
 ```json
 {

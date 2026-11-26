@@ -10,8 +10,10 @@ mod http;
 mod log;
 mod metrics;
 mod signal;
+mod term;
+mod text;
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -131,18 +133,23 @@ impl State {
 }
 
 pub fn main_entry() -> i32 {
+    // Resolve automatic colouring before parsing so even usage errors are
+    // readable; a successful parse applies the explicit flag below.
+    term::init(term::ColorMode::Auto);
     let args: Vec<String> = std::env::args().skip(1).collect();
     match cli::parse(&args) {
         Ok(cli) => run(cli),
         Err(error) => {
-            eprintln!("error: {error}");
-            eprintln!("Run {NAME} --help for usage.");
+            let style = term::stderr_style();
+            eprintln!("{} {error}", style.red("error:"));
+            eprintln!("{}", style.dim(&format!("Run {NAME} --help for usage.")));
             EXIT_CONFIG
         }
     }
 }
 
 fn run(cli: cli::Cli) -> i32 {
+    term::init(cli.color);
     log::set_level(cli.log_level);
     if cli.help {
         print!("{}", cli::HELP);
@@ -174,8 +181,10 @@ fn run(cli: cli::Cli) -> i32 {
         return EXIT_CONFIG;
     }
     if cli.check {
+        let style = term::stdout_style();
         println!(
-            "config OK: {} target(s) in {}",
+            "{} {} target(s) in {}",
+            style.green("config OK:"),
             loaded.targets.len(),
             config_path.display()
         );
@@ -206,7 +215,12 @@ fn run_once(engine: &Engine, cli: &cli::Cli) -> i32 {
     log::info(format!("probing {count} target(s) once"));
     let snapshot = Snapshot::new(engine.probe_once());
     let pretty = snapshot.to_pretty_json();
-    if let Err(error) = write_stdout(&format!("{pretty}\n")) {
+    let rendered = if uses_text(cli.format) {
+        text::render(&snapshot, term::stdout_style())
+    } else {
+        format!("{pretty}\n")
+    };
+    if let Err(error) = write_stdout(&rendered) {
         log::warn(format!("could not write the snapshot to stdout: {error}"));
     }
     if let Some(path) = &cli.output {
@@ -284,7 +298,12 @@ fn run_daemon(
         state.update(stats.clone());
         if Instant::now() >= next_emit {
             let snapshot = Snapshot::new(stats);
-            if stream_open && write_stdout(&format!("{}\n", snapshot.to_json())).is_err() {
+            let rendered = if uses_text(cli.format) {
+                text::render(&snapshot, term::stdout_style())
+            } else {
+                format!("{}\n", snapshot.to_json())
+            };
+            if stream_open && write_stdout(&rendered).is_err() {
                 log::warn("stdout is closed; continuing without streaming snapshots");
                 stream_open = false;
             }
@@ -308,6 +327,14 @@ fn run_daemon(
     }
     log::info("stopped");
     EXIT_OK
+}
+
+fn uses_text(format: cli::OutputFormat) -> bool {
+    match format {
+        cli::OutputFormat::Auto => std::io::stdout().is_terminal(),
+        cli::OutputFormat::Json => false,
+        cli::OutputFormat::Text => true,
+    }
 }
 
 fn write_stdout(text: &str) -> std::io::Result<()> {

@@ -99,6 +99,51 @@ fn once_probes_an_open_port_and_writes_the_snapshot_file() {
 }
 
 #[test]
+fn once_text_format_is_human_readable() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let port = listener.local_addr().expect("addr").port();
+    let handle = thread::spawn(move || {
+        let _ = listener.accept();
+    });
+
+    let dir = temp_dir();
+    let config = write_config(
+        &dir,
+        serde_json::json!({
+            "name": "local text",
+            "host": "127.0.0.1",
+            "port": port,
+            "protocol": "TCP",
+            "timeout_ms": 2_000
+        }),
+    );
+    let output = run(&[
+        "--config".as_ref(),
+        config.as_os_str(),
+        "--once".as_ref(),
+        "--format=text".as_ref(),
+        "--no-color".as_ref(),
+        "--log-level=error".as_ref(),
+    ]);
+    let _ = handle.join();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("STATUS"));
+    assert!(text.contains("ONLINE"));
+    assert!(text.contains("local text"));
+    assert!(text.contains("1/1"));
+    assert!(!text.contains("\"schema\""));
+    assert!(!text.contains("\x1b["));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn once_exits_three_when_a_target_is_down() {
     let port = {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");

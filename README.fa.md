@@ -56,7 +56,7 @@
 - **سینی سیستم** — بستن پنجره را به کمینه‌شدن در tray می‌برد و مانیتورینگ ادامه پیدا می‌کند؛ منوی نمایش/پنهان/خروج، قابل خاموش‌کردن در تنظیمات.
 - **بررسی به‌روزرسانی** — نظرسنجی روزانه ریلیزهای گیت‌هاب با دیالوگ شروع (دانلود/بعداً، برای هر نسخه فقط یک بار) و بررسی دستی در تنظیمات.
 - **انجین تاب‌آور** — اگر `.dll`/`.so` راست بیلد نشده باشد، برنامه خودکار با پروبر پشتیبان Dart کار می‌کند تا رابط کاربری همیشه قابل استفاده بماند.
-- **دیمن headless** — همان انجین به‌صورت باینری مستقل `netstudio-headless` برای سرورها: خواندن تارگت‌های JSON اپ، استریم NDJSON، فایل وضعیت اتمیک و سرویس `/healthz`، `/readyz`، `/metrics` (Prometheus) و `/api/v1/status` بدون Flutter. راهنما: [docs/headless.md](docs/headless.md).
+- **دیمن headless** — همان انجین به‌صورت باینری مستقل `netstudio-headless` برای سرورها: خواندن تارگت‌های JSON اپ، جدول رنگی روی ترمینال (و NDJSON وقتی خروجی pipe شود)، فایل وضعیت اتمیک و سرویس `/healthz`، `/readyz`، `/metrics` (Prometheus) و `/api/v1/status` بدون Flutter. راهنما: [docs/headless.md](docs/headless.md).
 
 ## دانلود (v1.6.0)
 
@@ -150,4 +150,4 @@ cd native_engine && cargo test --release && cargo clippy --release -- -D warning
 
 ## تغییرات و نقشه راه
 
-فایل [CHANGELOG.md](CHANGELOG.md) را ببینید. ایده‌های نزدیک: اندپوینت اکسپورت Prometheus، حسابداری واقعی per-process (ETW)، حالت headless/CLI، ذخیره‌سازی امن کلید در لینوکس/مک (libsecret/Keychain)، و ابزارهای شبکه‌ی بیشتر (تست سرعت، بنچمارک DNS، بازرس TLS).
+فایل [CHANGELOG.md](CHANGELOG.md) را ببینید. ایده‌های نزدیک: اندپوینت اکسپورت Prometheus، حسابداری واقعی per-process (ETW)، ذخیره‌سازی امن کلید در لینوکس/مک (libsecret/Keychain)، و ابزارهای شبکه‌ی بیشتر (تست سرعت، بنچمارک DNS، بازرس TLS).

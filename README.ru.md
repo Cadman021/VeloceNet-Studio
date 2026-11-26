@@ -56,7 +56,7 @@
 - **Системный трей** — закрытие окна сворачивает в трей, мониторинг продолжается; меню Показать/Скрыть/Выйти, отключается в настройках.
 - **Проверка обновлений** — ежедневный опрос GitHub Releases с диалогом при старте (Скачать/Позже, один раз на версию) и ручной проверкой в настройках.
 - **Живучий движок** — если `.dll`/`.so` Rust не собран, приложение автоматически работает на резервном пробере Dart, так что UI доступен всегда.
-- **Headless-демон** — тот же движок отдельным бинарником `netstudio-headless` для серверов: читает JSON-цели приложения, транслирует снимки NDJSON, атомарно пишет файл статуса и отдаёт `/healthz`, `/readyz`, `/metrics` (Prometheus) и `/api/v1/status` без Flutter. См. [docs/headless.md](docs/headless.md).
+- **Headless-демон** — тот же движок отдельным бинарником `netstudio-headless` для серверов: читает JSON-цели приложения, выводит цветную таблицу в терминале (NDJSON при перенаправлении), атомарно пишет файл статуса и отдаёт `/healthz`, `/readyz`, `/metrics` (Prometheus) и `/api/v1/status` без Flutter. См. [docs/headless.md](docs/headless.md).
 
 ## Скачать (v1.6.0)
 
@@ -150,4 +150,4 @@ cd native_engine && cargo test --release && cargo clippy --release -- -D warning
 
 ## Чейнджлог и планы
 
-См. [CHANGELOG.md](CHANGELOG.md). Ближайшие идеи: Prometheus-экспорт, честный per-process учёт (ETW), headless/CLI-демон, безопасное хранилище секретов в Linux/macOS (libsecret/Keychain), новые сетевые инструменты (тест скорости, бенчмарк DNS, инспектор TLS).
+См. [CHANGELOG.md](CHANGELOG.md). Ближайшие идеи: Prometheus-экспорт, честный per-process учёт (ETW), безопасное хранилище секретов в Linux/macOS (libsecret/Keychain), новые сетевые инструменты (тест скорости, бенчмарк DNS, инспектор TLS).

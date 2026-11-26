@@ -4,6 +4,25 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use super::log::Level;
+use super::term::ColorMode;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Auto,
+    Json,
+    Text,
+}
+
+impl OutputFormat {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "json" | "ndjson" => Some(Self::Json),
+            "text" | "table" | "human" => Some(Self::Text),
+            _ => None,
+        }
+    }
+}
 
 pub const HELP: &str = concat!(
     "netstudio-headless ",
@@ -16,12 +35,15 @@ pub const HELP: &str = concat!(
     "Options:\n",
     "  -c, --config <PATH>     Target configuration file (required)\n",
     "      --check             Validate the configuration and exit\n",
-    "      --once              Probe every target once, print JSON, and exit\n",
+    "      --once              Probe every target once, print a snapshot, exit\n",
     "      --interval <SECS>   Snapshot interval in seconds (default: 5)\n",
     "      --listen <ADDR>     Serve HTTP on ADDR, e.g. 127.0.0.1:9101\n",
-    "      --output <PATH>     Atomically write the latest snapshot to PATH\n",
+    "      --output <PATH>     Atomically write the latest JSON snapshot to PATH\n",
     "      --pid-file <PATH>   Write the process id to PATH while running\n",
-    "  -q, --quiet             Do not stream NDJSON snapshots to stdout\n",
+    "  -q, --quiet             Do not stream snapshots to stdout\n",
+    "      --format <MODE>     auto (default), json or text\n",
+    "      --color <WHEN>      auto (default), always or never\n",
+    "          --no-color      Same as --color never\n",
     "      --log-level <LEVEL> error, warn, info (default) or debug\n",
     "  -h, --help              Print this help and exit\n",
     "  -V, --version           Print the version and exit\n",
@@ -45,6 +67,8 @@ pub struct Cli {
     pub listen: Option<SocketAddr>,
     pub output: Option<PathBuf>,
     pub pid_file: Option<PathBuf>,
+    pub format: OutputFormat,
+    pub color: ColorMode,
     pub log_level: Level,
 }
 
@@ -61,6 +85,8 @@ impl Default for Cli {
             listen: None,
             output: None,
             pid_file: None,
+            format: OutputFormat::Auto,
+            color: ColorMode::Auto,
             log_level: Level::Info,
         }
     }
@@ -122,6 +148,22 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
             "--pid-file" => {
                 cli.pid_file = Some(PathBuf::from(take_value(&flag, inline, args, &mut index)?));
             }
+            "--format" => {
+                let value = take_value(&flag, inline, args, &mut index)?;
+                cli.format = OutputFormat::parse(&value).ok_or_else(|| {
+                    format!("invalid --format value: {value} (use auto, json or text)")
+                })?;
+            }
+            "--color" => {
+                let value = take_value(&flag, inline, args, &mut index)?;
+                cli.color = ColorMode::parse(&value).ok_or_else(|| {
+                    format!("invalid --color value: {value} (use auto, always or never)")
+                })?;
+            }
+            "--no-color" => {
+                reject_value(&flag, inline.as_deref())?;
+                cli.color = ColorMode::Never;
+            }
             "--log-level" => {
                 let value = take_value(&flag, inline, args, &mut index)?;
                 cli.log_level = Level::parse(&value).ok_or_else(|| {
@@ -180,6 +222,8 @@ mod tests {
         assert!(cli.listen.is_none());
         assert!(!cli.once);
         assert!(!cli.check);
+        assert_eq!(cli.format, OutputFormat::Auto);
+        assert_eq!(cli.color, ColorMode::Auto);
         assert_eq!(cli.log_level, Level::Info);
     }
 
@@ -192,12 +236,16 @@ mod tests {
             "--output=status.json",
             "--pid-file=run.pid",
             "--quiet",
+            "--format=text",
+            "--color=always",
             "--log-level=debug",
         ]))
         .expect("parse");
         assert_eq!(cli.interval_secs, 15);
         assert_eq!(cli.listen.expect("listen").port(), 9101);
         assert!(cli.quiet);
+        assert_eq!(cli.format, OutputFormat::Text);
+        assert_eq!(cli.color, ColorMode::Always);
         assert_eq!(cli.log_level, Level::Debug);
     }
 
@@ -208,10 +256,18 @@ mod tests {
         assert!(parse(&args(&["--interval", "soon"])).is_err());
         assert!(parse(&args(&["--listen", "localhost"])).is_err());
         assert!(parse(&args(&["--log-level", "trace"])).is_err());
+        assert!(parse(&args(&["--format", "yaml"])).is_err());
+        assert!(parse(&args(&["--color", "rainbow"])).is_err());
         assert!(parse(&args(&["--config"])).is_err());
         assert!(parse(&args(&["--once=yes"])).is_err());
         assert!(parse(&args(&["--bogus"])).is_err());
         assert!(parse(&args(&["--once", "--check"])).is_err());
+    }
+
+    #[test]
+    fn no_color_alias_wins() {
+        let cli = parse(&args(&["--color=always", "--no-color"])).expect("parse");
+        assert_eq!(cli.color, ColorMode::Never);
     }
 
     #[test]
