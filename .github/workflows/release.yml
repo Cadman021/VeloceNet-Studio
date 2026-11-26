@@ -26,10 +26,11 @@ jobs:
         working-directory: native_engine
         run: cargo build --release
 
-      - name: Stage engine DLL
+      - name: Stage engine DLL and headless daemon
         shell: pwsh
         run: |
           Copy-Item native_engine/target/release/netstudio_engine.dll -Destination . -Force
+          Copy-Item native_engine/target/release/netstudio-headless.exe -Destination . -Force
 
       - uses: subosito/flutter-action@v2
         with:
@@ -52,12 +53,13 @@ jobs:
       - name: Build Windows release
         run: flutter build windows --release
 
-      - name: Bundle DLL next to the executable
+      - name: Bundle engine and daemon next to the executable
         shell: pwsh
         run: |
           $exe = Get-ChildItem build/windows/x64/runner/Release -Filter *.exe | Select-Object -First 1
           if ($null -eq $exe) { throw "No exe found in build/windows/x64/runner/Release" }
           Copy-Item netstudio_engine.dll -Destination build/windows/x64/runner/Release -Force
+          Copy-Item netstudio-headless.exe -Destination build/windows/x64/runner/Release -Force
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath velocenet-studio-windows-x64.zip -Force
 
       - name: Upload artifact
@@ -106,9 +108,10 @@ jobs:
       - name: Build Linux release
         run: flutter build linux --release
 
-      - name: Bundle .so next to the executable
+      - name: Bundle .so and daemon next to the executable
         run: |
           cp native_engine/target/release/libnetstudio_engine.so build/linux/x64/release/bundle/
+          cp native_engine/target/release/netstudio-headless build/linux/x64/release/bundle/
           tar -czf velocenet-studio-linux-x64.tar.gz -C build/linux/x64/release/bundle .
 
       - name: Upload artifact
@@ -150,10 +153,11 @@ jobs:
       - name: Build macOS release
         run: flutter build macos --release
 
-      - name: Bundle .dylib inside the .app and zip it
+      - name: Bundle .dylib and daemon inside the .app and zip it
         run: |
           APP=$(ls -d build/macos/Build/Products/Release/*.app | head -1)
           cp native_engine/target/release/libnetstudio_engine.dylib "$APP/Contents/MacOS/"
+          cp native_engine/target/release/netstudio-headless "$APP/Contents/MacOS/"
           ditto -c -k --sequesterRsrc --keepParent "$APP" velocenet-studio-macos-arm64.zip
 
       - name: Upload artifact

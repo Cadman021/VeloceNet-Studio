@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use crate::probe::{execute_probe, ProbeProtocol};
 use crate::stats::{TargetMetricTracker, TargetStats};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetConfig {
     pub id: u32,
     pub name: String,
@@ -146,6 +146,55 @@ impl Engine {
     pub fn get_metrics_json(&self) -> String {
         let stats = self.get_metrics_snapshot();
         serde_json::to_string(&stats).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Probe every configured target exactly once and return the resulting
+    /// stats. Used by the headless binary in `--once` mode; unlike
+    /// [`Engine::start`] this does not schedule periodic probes.
+    ///
+    /// Must not be called from inside the engine runtime (it calls
+    /// `block_on`). The FFI layer never calls this, so the Dart UI is
+    /// unaffected.
+    pub fn probe_once(&self) -> Vec<TargetStats> {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Vec::new();
+        };
+        runtime.block_on(Self::probe_once_async(
+            self.targets.clone(),
+            self.trackers.clone(),
+        ));
+        self.get_metrics_snapshot()
+    }
+
+    async fn probe_once_async(
+        targets: Arc<RwLock<HashMap<u32, TargetConfig>>>,
+        trackers: Arc<RwLock<HashMap<u32, TargetMetricTracker>>>,
+    ) {
+        let configs: Vec<TargetConfig> = targets.read().values().cloned().collect();
+        let mut probes = tokio::task::JoinSet::new();
+        for config in configs {
+            let trackers = trackers.clone();
+            probes.spawn(async move {
+                let timeout = Duration::from_millis(config.timeout_ms.max(100));
+                let result = execute_probe(
+                    config.protocol,
+                    &config.host,
+                    config.port,
+                    &config.http_path,
+                    timeout,
+                )
+                .await;
+                if let Some(tracker) = trackers.write().get_mut(&config.id) {
+                    tracker.record_sample(
+                        result.success,
+                        result.rtt_ms,
+                        result.http_status,
+                        result.cert_days_left,
+                    );
+                }
+            });
+        }
+        while probes.join_next().await.is_some() {}
     }
 
     async fn run_target_loop(

@@ -39,6 +39,8 @@ migrate_working_dir/
 *.so
 *.dylib
 /netstudio_engine.dll
+/netstudio-headless
+/netstudio-headless.exe
 /native_engine/target/
 native_engine/target/
 build/windows/

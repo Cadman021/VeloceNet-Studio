@@ -1,6 +1,7 @@
 pub mod bandwidth;
 pub mod engine;
 pub mod ffi;
+pub mod headless;
 pub mod probe;
 pub mod stats;
 pub mod traceroute;
@@ -188,5 +189,33 @@ mod tests {
         // Lifetime loss is still 50%, but the window is clean.
         assert!((snap.loss_rate - 50.0).abs() < 1.0);
         assert_eq!(snap.status, TargetStatus::Online);
+    }
+
+    #[test]
+    fn test_probe_once_records_one_sample_per_target() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = std::thread::spawn(move || {
+            let _ = listener.accept();
+        });
+
+        let engine = Engine::new().expect("engine");
+        engine.add_target(TargetConfig {
+            id: 11,
+            name: "Local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            protocol: probe::ProbeProtocol::Tcp,
+            interval_ms: 1_000,
+            timeout_ms: 2_000,
+            http_path: String::new(),
+        });
+        let stats = engine.probe_once();
+        let _ = handle.join();
+
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].sent_count, 1);
+        assert_eq!(stats[0].received_count, 1);
+        assert!(stats[0].last_rtt_ms >= 0.0);
     }
 }
