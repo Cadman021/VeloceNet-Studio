@@ -24,11 +24,15 @@ pub fn render(stats: &[TargetStats], version: &str) -> String {
         stats,
         |_| 1.0,
     );
-    gauge_family(
+    // Absent (rather than 0) until the first sample: a target nobody has
+    // probed yet is not "down", and alert rules on up == 0 must not fire on
+    // daemon startup or on a target whose interval is longer than the scrape.
+    gauge_family_if(
         &mut out,
         "netstudio_target_up",
-        "1 when the most recent probe succeeded, 0 otherwise.",
+        "1 when the most recent probe succeeded, 0 when it failed (absent until the first sample).",
         stats,
+        |target| target.sent_count > 0,
         up_value,
     );
     gauge_family(
@@ -110,6 +114,19 @@ pub fn render(stats: &[TargetStats], version: &str) -> String {
     );
     gauge_family(
         &mut out,
+        "netstudio_target_last_success_timestamp_seconds",
+        "Unix timestamp of the last successful probe (-1 before the first success).",
+        stats,
+        |target| {
+            if target.last_success_epoch_ms == 0 {
+                -1.0
+            } else {
+                target.last_success_epoch_ms as f64 / 1_000.0
+            }
+        },
+    );
+    gauge_family(
+        &mut out,
         "netstudio_target_last_sample_age_seconds",
         "Age of the latest probe sample in seconds (-1 before the first sample).",
         stats,
@@ -132,6 +149,13 @@ pub fn render(stats: &[TargetStats], version: &str) -> String {
         "1 when the latest ICMP probe used the TCP fallback.",
         stats,
         |target| if target.tcp_fallback { 1.0 } else { 0.0 },
+    );
+    gauge_family(
+        &mut out,
+        "netstudio_target_muted",
+        "1 when the target is muted in the app (still probed, not alert-worthy).",
+        stats,
+        |target| if target.muted { 1.0 } else { 0.0 },
     );
 
     let _ = writeln!(
@@ -189,9 +213,21 @@ fn gauge_family(
     stats: &[TargetStats],
     value: impl Fn(&TargetStats) -> f64,
 ) {
+    gauge_family_if(out, name, help, stats, |_| true, value);
+}
+
+/// Same as gauge_family, but only targets accepted by `visible` get a series.
+fn gauge_family_if(
+    out: &mut String,
+    name: &str,
+    help: &str,
+    stats: &[TargetStats],
+    visible: impl Fn(&TargetStats) -> bool,
+    value: impl Fn(&TargetStats) -> f64,
+) {
     let _ = writeln!(out, "# HELP {name} {help}");
     let _ = writeln!(out, "# TYPE {name} gauge");
-    for target in stats {
+    for target in stats.iter().filter(|target| visible(target)) {
         let _ = writeln!(
             out,
             "{name}{{{}}} {}",
@@ -225,12 +261,13 @@ fn counter_family(
 
 fn labels(target: &TargetStats) -> String {
     format!(
-        "id=\"{}\",name=\"{}\",host=\"{}\",port=\"{}\",protocol=\"{}\"",
+        "id=\"{}\",name=\"{}\",host=\"{}\",port=\"{}\",protocol=\"{}\",group=\"{}\"",
         target.id,
         escape_label(&target.name),
         escape_label(&target.host),
         target.port,
         escape_label(&target.protocol),
+        escape_label(&target.group),
     )
 }
 
@@ -287,10 +324,10 @@ mod tests {
         let text = render(&[sample()], "1.6.0");
         assert!(text.contains("netstudio_build_info{version=\"1.6.0\"} 1"));
         assert!(text.contains(
-            "netstudio_target_status{id=\"1\",name=\"API\",host=\"127.0.0.1\",port=\"80\",protocol=\"TCP\"} 1"
+            "netstudio_target_status{id=\"1\",name=\"API\",host=\"127.0.0.1\",port=\"80\",protocol=\"TCP\",group=\"\"} 1"
         ));
         assert!(text.contains(
-            "netstudio_target_sent_total{id=\"1\",name=\"API\",host=\"127.0.0.1\",port=\"80\",protocol=\"TCP\"} 1"
+            "netstudio_target_sent_total{id=\"1\",name=\"API\",host=\"127.0.0.1\",port=\"80\",protocol=\"TCP\",group=\"\"} 1"
         ));
         assert!(text.contains("netstudio_target_http_status_code"));
         assert!(text.contains("netstudio_target_http_status_code{id=\"1\""));
@@ -298,7 +335,52 @@ mod tests {
         assert!(text.contains("netstudio_target_cert_days_left"));
         assert!(text.contains("netstudio_target_stale"));
         assert!(text.contains("netstudio_target_last_sample_age_seconds"));
+        assert!(text.contains("netstudio_target_last_success_timestamp_seconds"));
         assert!(text.contains("netstudio_target_tcp_fallback"));
+    }
+
+    #[test]
+    fn last_success_is_minus_one_until_a_probe_answers() {
+        let mut pending = TargetMetricTracker::new(
+            3,
+            "Pending".to_string(),
+            "127.0.0.1".to_string(),
+            80,
+            "TCP".to_string(),
+        );
+        let text = render(&[pending.snapshot()], "1.6.0");
+        assert!(
+            text.contains("netstudio_target_last_success_timestamp_seconds{id=\"3\",")
+                && text.contains("} -1\n"),
+            "{text}"
+        );
+
+        pending.record_sample(false, -1.0, None, None);
+        let failed = render(&[pending.snapshot()], "1.6.0");
+        // A failure moves the check timestamp but leaves last_success at -1.
+        assert!(
+            failed.contains("netstudio_target_last_success_timestamp_seconds{id=\"3\",")
+                && failed.contains("} -1\n"),
+            "{failed}"
+        );
+
+        pending.record_sample(true, 1.0, None, None);
+        let ok = render(&[pending.snapshot()], "1.6.0");
+        assert!(
+            !ok.contains("} -1\n") || ok.contains("last_sample_age"),
+            "{ok}"
+        );
+        let line = ok
+            .lines()
+            .find(|line| line.starts_with("netstudio_target_last_success_timestamp_seconds{"))
+            .expect("series");
+        let value: f64 = line
+            .rsplit(' ')
+            .next()
+            .expect("value")
+            .parse()
+            .expect("number");
+        assert!(value > 1_600_000_000.0, "{line}");
     }
 
     #[test]
@@ -324,6 +406,46 @@ mod tests {
         assert!(text.contains("kind=\"refused\""));
         assert!(!text.contains("connection refused"));
         assert!(text.contains("netstudio_target_tcp_fallback{id=\"2\","));
+    }
+
+    #[test]
+    fn pending_targets_have_no_up_series() {
+        let target = TargetMetricTracker::new(
+            3,
+            "Pending".to_string(),
+            "127.0.0.1".to_string(),
+            80,
+            "TCP".to_string(),
+        )
+        .snapshot();
+        let text = render(&[target], "1.6.0");
+        // The family header stays, the series does not: nothing has been
+        // probed yet, so "down" would be a lie.
+        assert!(text.contains("# HELP netstudio_target_up "));
+        assert!(!text.contains("netstudio_target_up{"));
+        // The pending status itself stays visible to dashboards.
+        assert!(text.contains("netstudio_target_status{id=\"3\""));
+    }
+
+    #[test]
+    fn group_and_mute_become_a_label_and_a_gauge() {
+        let mut tracker = TargetMetricTracker::new(
+            4,
+            "Edge".to_string(),
+            "127.0.0.1".to_string(),
+            80,
+            "TCP".to_string(),
+        )
+        .with_organization("edge".to_string(), true);
+        tracker.record_sample(false, -1.0, None, None);
+        let text = render(&[tracker.snapshot()], "1.6.0");
+        assert!(text.contains("group=\"edge\""));
+        assert!(text.lines().any(|line| {
+            line.starts_with("netstudio_target_muted{id=\"4\"") && line.ends_with(" 1")
+        }));
+        assert!(text.lines().any(|line| {
+            line.starts_with("netstudio_target_up{id=\"4\"") && line.ends_with(" 0")
+        }));
     }
 
     #[test]

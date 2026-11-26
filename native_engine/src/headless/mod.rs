@@ -13,9 +13,10 @@ mod signal;
 mod term;
 mod text;
 
-use std::collections::HashSet;
-use std::io::{IsTerminal, Write};
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::sleep;
@@ -23,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 
-use crate::engine::Engine;
+use crate::engine::{Engine, TargetConfig};
 use crate::stats::{self, TargetStats, TargetStatus};
 
 pub use log::Level;
@@ -47,6 +48,8 @@ pub struct Summary {
     pub down: usize,
     /// Targets whose latest sample exceeded 2 × interval + timeout.
     pub stale: usize,
+    /// Targets muted in the app (probed and reported, never alert-worthy).
+    pub muted: usize,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -58,11 +61,14 @@ pub struct Snapshot {
     pub epoch_ms: u64,
     pub version: &'static str,
     pub summary: Summary,
-    pub targets: Vec<TargetStats>,
+    /// Shared, not cloned: the daemon hands the same statistics to the stdout
+    /// snapshot, the output file and every HTTP scrape.
+    pub targets: Arc<Vec<TargetStats>>,
 }
 
 impl Snapshot {
-    pub fn new(targets: Vec<TargetStats>) -> Self {
+    pub fn new(targets: impl Into<Arc<Vec<TargetStats>>>) -> Self {
+        let targets: Arc<Vec<TargetStats>> = targets.into();
         let epoch_ms = log::now_epoch_ms();
         let mut summary = Summary {
             targets: targets.len(),
@@ -72,8 +78,9 @@ impl Snapshot {
             offline: 0,
             down: 0,
             stale: 0,
+            muted: 0,
         };
-        for target in &targets {
+        for target in targets.iter() {
             match target.status {
                 TargetStatus::Pending => summary.pending += 1,
                 TargetStatus::Online => summary.online += 1,
@@ -85,6 +92,9 @@ impl Snapshot {
             }
             if target.stale {
                 summary.stale += 1;
+            }
+            if target.muted {
+                summary.muted += 1;
             }
         }
         Self {
@@ -110,22 +120,30 @@ impl Snapshot {
 /// State shared by the daemon loop and the HTTP threads.
 pub struct State {
     target_count: AtomicUsize,
-    stats: RwLock<Vec<TargetStats>>,
+    stats: RwLock<Arc<Vec<TargetStats>>>,
 }
 
 impl State {
     pub fn new(target_count: usize) -> Arc<Self> {
         Arc::new(Self {
             target_count: AtomicUsize::new(target_count),
-            stats: RwLock::new(Vec::new()),
+            stats: RwLock::new(Arc::new(Vec::new())),
         })
     }
 
-    pub fn update(&self, stats: Vec<TargetStats>) {
-        *self.stats.write() = stats;
+    /// Takes an Arc so a tick can hand the same statistics to the shared state
+    /// and to the rendered snapshot without a second deep copy.
+    pub fn update(&self, stats: impl Into<Arc<Vec<TargetStats>>>) {
+        *self.stats.write() = stats.into();
     }
 
-    pub fn stats(&self) -> Vec<TargetStats> {
+    /// After a SIGHUP reload the expected target count changes; readiness must
+    /// compare against the new set, not the startup set.
+    pub fn set_target_count(&self, target_count: usize) {
+        self.target_count.store(target_count, Ordering::Relaxed);
+    }
+
+    pub fn stats(&self) -> Arc<Vec<TargetStats>> {
         self.stats.read().clone()
     }
 
@@ -133,9 +151,14 @@ impl State {
         Snapshot::new(self.stats())
     }
 
+    /// Ready only once *every* configured target has produced a sample:
+    /// before that the snapshot is incomplete and a scrape would read zeros
+    /// as real values. Targets that are merely slow still hold readiness
+    /// back, which is what an orchestrator should wait for.
     pub fn ready(&self) -> bool {
-        self.target_count.load(Ordering::Relaxed) > 0
-            && self.stats.read().iter().any(|target| target.sent_count > 0)
+        let expected = self.target_count.load(Ordering::Relaxed);
+        let stats = self.stats.read();
+        expected > 0 && stats.len() == expected && stats.iter().all(|target| target.sent_count > 0)
     }
 }
 
@@ -158,6 +181,7 @@ pub fn main_entry() -> i32 {
 fn run(cli: cli::Cli) -> i32 {
     term::init(cli.color);
     log::set_level(cli.log_level);
+    log::set_format(cli.log_format);
     if cli.help {
         print!("{}", cli::HELP);
         return EXIT_OK;
@@ -170,7 +194,7 @@ fn run(cli: cli::Cli) -> i32 {
         log::error("--config <PATH> is required");
         return EXIT_CONFIG;
     };
-    let loaded = match config::load(&config_path) {
+    let mut loaded = match config::load(&config_path) {
         Ok(loaded) => loaded,
         Err(error) => {
             log::error(error);
@@ -187,15 +211,34 @@ fn run(cli: cli::Cli) -> i32 {
         ));
         return EXIT_CONFIG;
     }
+    // --interval is the snapshot cadence; --probe-interval overrides every
+    // target's own interval_ms so one flag can slow a mixed config down (or
+    // speed it up) without editing the file. Staleness follows the override,
+    // because the engine derives it from the effective interval.
+    if let Some(seconds) = cli.probe_interval_secs {
+        let interval_ms = seconds * 1_000;
+        for target in &mut loaded.targets {
+            target.interval_ms = interval_ms;
+        }
+    }
     if cli.check {
-        let style = term::stdout_style();
-        println!(
-            "{} {} target(s) in {}",
-            style.green("config OK:"),
-            loaded.targets.len(),
-            config_path.display()
-        );
-        return EXIT_OK;
+        return run_check(&cli, &loaded, &config_path);
+    }
+
+    // Pre-flight the daemon's own side channels: failing before the probe
+    // loop starts beats a loop that runs forever without writing a snapshot
+    // or a pid file.
+    if let Some(path) = &cli.output {
+        if let Err(error) = validate_output_path(path) {
+            log::error(error);
+            return EXIT_CONFIG;
+        }
+    }
+    if let Some(path) = &cli.pid_file {
+        if let Err(error) = validate_pid_path(path) {
+            log::error(error);
+            return EXIT_CONFIG;
+        }
     }
 
     stats::set_alert_thresholds(loaded.offline_after, loaded.recover_after);
@@ -213,6 +256,141 @@ fn run(cli: cli::Cli) -> i32 {
         run_once(&engine, &cli)
     } else {
         run_daemon(engine, &cli, loaded, &config_path)
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CheckReport {
+    schema: u32,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    ok: bool,
+    config: String,
+    targets: usize,
+    muted: usize,
+    warnings: Vec<String>,
+    checks: Vec<CheckItem>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CheckItem {
+    name: &'static str,
+    ok: bool,
+    detail: String,
+}
+
+/// `--check` answers one question: "would this invocation start right now?"
+/// Besides the config it validates every side channel the daemon opens at
+/// startup, so an unwritable output directory or a taken port is a failed
+/// check instead of a daemon that runs for hours without writing anything.
+fn run_check(cli: &cli::Cli, loaded: &config::LoadedConfig, config_path: &Path) -> i32 {
+    let muted = loaded.targets.iter().filter(|target| target.muted).count();
+    let mut checks = vec![CheckItem {
+        name: "config",
+        ok: true,
+        detail: format!("{} usable target(s), {muted} muted", loaded.targets.len()),
+    }];
+
+    if let Some(path) = &cli.output {
+        checks.push(check_item(
+            "output",
+            validate_output_path(path),
+            format!("{} is writable", path.display()),
+        ));
+    }
+    if let Some(path) = &cli.pid_file {
+        checks.push(check_item(
+            "pid-file",
+            validate_pid_path(path),
+            format!("{} is available", path.display()),
+        ));
+    }
+    if let Some(address) = cli.listen {
+        checks.push(check_item(
+            "listen",
+            validate_listen(address),
+            format!("{address} is bindable"),
+        ));
+        // A missing or empty token file must fail the preflight, not the first
+        // authenticated scrape.
+        let token = http_token(cli);
+        let detail = match (&token, &cli.http_token_file) {
+            (Ok(Some(_)), Some(path)) => format!("bearer token from {} is loaded", path.display()),
+            (Ok(Some(_)), None) => "bearer token from NETSTUDIO_HTTP_TOKEN is loaded".to_string(),
+            _ => "no token (endpoints are unauthenticated)".to_string(),
+        };
+        let ok = token.map(|_| ());
+        checks.push(check_item("auth", ok, detail));
+    }
+
+    let report = CheckReport {
+        schema: 1,
+        kind: "check",
+        ok: checks.iter().all(|check| check.ok),
+        config: config_path.display().to_string(),
+        targets: loaded.targets.len(),
+        muted,
+        warnings: loaded.warnings.clone(),
+        checks,
+    };
+
+    // Same rule as --once and the daemon: text on a terminal, JSON when piped;
+    // --format overrides either. A check needs no probe, so the text form is
+    // the whole report.
+    let json = !uses_text(cli.format);
+    if !json {
+        let style = term::stdout_style();
+        if report.ok {
+            println!(
+                "{} {} target(s) in {}",
+                style.green("config OK:"),
+                report.targets,
+                config_path.display()
+            );
+            for check in &report.checks {
+                println!(
+                    "  {} {}",
+                    style.dim(&format!("{:<8}", check.name)),
+                    check.detail
+                );
+            }
+        } else {
+            for check in report.checks.iter().filter(|check| !check.ok) {
+                log::error(format!("{}: {}", check.name, check.detail));
+            }
+            println!(
+                "{} {} target(s) in {}",
+                style.red("config FAILED:"),
+                report.targets,
+                config_path.display()
+            );
+        }
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string())
+        );
+    }
+
+    if report.ok {
+        EXIT_OK
+    } else {
+        EXIT_CONFIG
+    }
+}
+
+fn check_item(name: &'static str, result: Result<(), String>, ok_detail: String) -> CheckItem {
+    match result {
+        Ok(()) => CheckItem {
+            name,
+            ok: true,
+            detail: ok_detail,
+        },
+        Err(error) => CheckItem {
+            name,
+            ok: false,
+            detail: error,
+        },
     }
 }
 
@@ -236,16 +414,25 @@ fn run_once(engine: &Engine, cli: &cli::Cli) -> i32 {
             return EXIT_FAILURE;
         }
     }
+    // A muted target is still probed and reported, but muting means "do not
+    // page me": it must not turn a cron run red. The snapshot keeps the
+    // factual count, the exit code uses the alerting one.
+    let alerting_down = snapshot
+        .targets
+        .iter()
+        .filter(|target| !target.muted && target.sent_count > 0 && target.last_rtt_ms < 0.0)
+        .count();
     log::info(format!(
-        "finished in {:.2}s: {} target(s), {} down",
+        "finished in {:.2}s: {} target(s), {} down, {} muted",
         started.elapsed().as_secs_f64(),
         snapshot.summary.targets,
-        snapshot.summary.down
+        snapshot.summary.down,
+        snapshot.summary.muted
     ));
     if snapshot.summary.targets == 0 {
         return EXIT_FAILURE;
     }
-    if snapshot.summary.down > 0 {
+    if alerting_down > 0 {
         EXIT_TARGETS_DOWN
     } else {
         EXIT_OK
@@ -260,16 +447,36 @@ fn run_daemon(
 ) -> i32 {
     let state = State::new(loaded.targets.len());
     state.update(engine.get_metrics_snapshot());
+    // What the engine is currently running; a SIGHUP compares the file against
+    // this snapshot instead of get_metrics_snapshot() (which is empty until the
+    // first sample and would make every reload look like "add everything").
+    let mut applied: HashMap<u32, TargetConfig> = loaded
+        .targets
+        .iter()
+        .map(|target| (target.id, target.clone()))
+        .collect();
 
+    let token = match http_token(cli) {
+        Ok(token) => token,
+        Err(error) => {
+            log::error(error);
+            return EXIT_CONFIG;
+        }
+    };
     let mut server = match cli.listen {
         Some(address) => {
             if !address.ip().is_loopback() {
+                let transport = if token.is_some() {
+                    "with a bearer token but without TLS"
+                } else {
+                    "without TLS or authentication"
+                };
                 log::warn(format!(
-                    "HTTP is bound to non-loopback {address} without TLS or authentication; \
-                     bind to 127.0.0.1 and put a reverse proxy in front, or restrict access at the firewall"
+                    "HTTP is bound to non-loopback {address} {transport}; \
+                     bind to 127.0.0.1 and put a TLS reverse proxy in front, or restrict access at the firewall"
                 ));
             }
-            match http::Server::spawn(address, state.clone()) {
+            match http::Server::spawn(address, state.clone(), token.clone()) {
                 Ok(server) => Some(server),
                 Err(error) => {
                     log::error(format!("cannot listen on {address}: {error}"));
@@ -280,14 +487,21 @@ fn run_daemon(
         None => None,
     };
 
-    if let Some(path) = &cli.pid_file {
-        if let Err(error) = write_pid_file(path) {
-            log::error(error);
-            if let Some(mut server) = server.take() {
-                server.stop();
+    let pid_file = match &cli.pid_file {
+        Some(path) => match PidFile::acquire(path) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                log::error(error);
+                if let Some(mut server) = server.take() {
+                    server.stop();
+                }
+                return EXIT_CONFIG;
             }
-            return EXIT_FAILURE;
-        }
+        },
+        None => None,
+    };
+    if let Some(guard) = &pid_file {
+        log::info(format!("pid file: {}", guard.path().display()));
     }
     if let Err(error) = signal::install() {
         log::warn(format!("signal handling unavailable: {error}"));
@@ -298,6 +512,9 @@ fn run_daemon(
         loaded.targets.len(),
         config_path.display()
     ));
+    if signal::RELOAD_SUPPORTED {
+        log::info("SIGHUP reloads the config file without a restart");
+    }
     if let Some(server) = &server {
         log::info(format!("HTTP listening on http://{}", server.addr()));
     }
@@ -309,10 +526,24 @@ fn run_daemon(
     let mut next_emit = Instant::now();
     let mut stream_open = !cli.quiet;
     let mut stale_targets = HashSet::new();
+    // Log an output failure once, not once per interval, and announce the
+    // recovery: the same message every second buries everything else.
+    let mut output_error: Option<String> = None;
     while !signal::shutdown_requested() {
-        let stats = engine.get_metrics_snapshot();
+        if signal::take_reload_request() {
+            match reload(&engine, &state, cli, config_path, &mut applied) {
+                Ok(count) => log::info(format!(
+                    "reloaded {count} target(s) from {}",
+                    config_path.display()
+                )),
+                Err(error) => log::error(format!(
+                    "reload failed, keeping the running configuration: {error}"
+                )),
+            }
+        }
+        let stats = Arc::new(engine.get_metrics_snapshot());
         log_staleness(&mut stale_targets, &stats);
-        state.update(stats.clone());
+        state.update(Arc::clone(&stats));
         if Instant::now() >= next_emit {
             let snapshot = Snapshot::new(stats);
             let rendered = if uses_text(cli.format) {
@@ -325,8 +556,21 @@ fn run_daemon(
                 stream_open = false;
             }
             if let Some(path) = &cli.output {
-                if let Err(error) = write_snapshot(path, &snapshot.to_pretty_json()) {
-                    log::error(error);
+                match write_snapshot(path, &snapshot.to_pretty_json()) {
+                    Ok(()) => {
+                        if output_error.take().is_some() {
+                            log::info(format!(
+                                "snapshot file {} is writable again",
+                                path.display()
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        if output_error.as_deref() != Some(error.as_str()) {
+                            log::error(error.clone());
+                            output_error = Some(error);
+                        }
+                    }
                 }
             }
             next_emit = Instant::now() + Duration::from_secs(cli.interval_secs);
@@ -339,11 +583,94 @@ fn run_daemon(
     if let Some(mut server) = server.take() {
         server.stop();
     }
-    if let Some(path) = &cli.pid_file {
-        remove_pid_file(path);
-    }
+    // Drop ends the exclusive pid-file claim (and removes the file).
+    drop(pid_file);
     log::info("stopped");
     EXIT_OK
+}
+
+/// Longest accepted HTTP token; long secrets are pointless and would only
+/// bloat the header comparison.
+const MAX_HTTP_TOKEN_CHARS: usize = 256;
+
+/// The HTTP bearer token comes from a file (preferred: it keeps the secret out
+/// of the process list and shell history) or from NETSTUDIO_HTTP_TOKEN.
+fn http_token(cli: &cli::Cli) -> Result<Option<Arc<str>>, String> {
+    let raw = match &cli.http_token_file {
+        Some(path) => Some(fs::read_to_string(path).map_err(|error| {
+            format!("cannot read --http-token-file {}: {error}", path.display())
+        })?),
+        // An empty variable means "not configured": a blank secret must never
+        // be silently accepted as a token nobody can guess.
+        None => match std::env::var("NETSTUDIO_HTTP_TOKEN") {
+            Ok(value) if !value.trim().is_empty() => Some(value),
+            _ => None,
+        },
+    };
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let token = raw.trim();
+    if token.is_empty() {
+        return Err("HTTP token is empty".to_string());
+    }
+    if token.chars().count() > MAX_HTTP_TOKEN_CHARS {
+        return Err(format!(
+            "HTTP token is longer than {MAX_HTTP_TOKEN_CHARS} characters"
+        ));
+    }
+    if token.chars().any(char::is_control) {
+        return Err("HTTP token contains a control character".to_string());
+    }
+    Ok(Some(Arc::from(token)))
+}
+
+/// SIGHUP: re-read the config file and apply add/remove/update without a
+/// restart. A malformed file must never take the daemon down, so every failure
+/// is returned as an error and the caller keeps the old configuration.
+fn reload(
+    engine: &Engine,
+    state: &State,
+    cli: &cli::Cli,
+    config_path: &Path,
+    applied: &mut HashMap<u32, TargetConfig>,
+) -> Result<usize, String> {
+    let mut loaded = config::load(config_path)?;
+    if loaded.targets.is_empty() {
+        return Err(format!("no usable targets in {}", config_path.display()));
+    }
+    if let Some(seconds) = cli.probe_interval_secs {
+        let interval_ms = seconds * 1_000;
+        for target in &mut loaded.targets {
+            target.interval_ms = interval_ms;
+        }
+    }
+
+    let desired: HashMap<u32, TargetConfig> = loaded
+        .targets
+        .iter()
+        .map(|target| (target.id, target.clone()))
+        .collect();
+    for id in applied.keys().filter(|id| !desired.contains_key(id)) {
+        engine.remove_target(*id);
+        log::info(format!("reload: target {id} removed"));
+    }
+    for (id, target) in &desired {
+        match applied.get(id) {
+            // Unchanged targets keep their history, jitter and counters.
+            Some(previous) if previous == target => continue,
+            Some(_) => log::info(format!(
+                "reload: target {id} ({}) updated; its counters restart",
+                target.name
+            )),
+            None => log::info(format!("reload: target {id} ({}) added", target.name)),
+        }
+        engine.add_target(target.clone());
+    }
+    stats::set_alert_thresholds(loaded.offline_after, loaded.recover_after);
+    *applied = desired;
+    state.set_target_count(applied.len());
+    Ok(applied.len())
 }
 
 /// Warn once when a target goes stale, and log recovery once. This keeps a
@@ -385,30 +712,211 @@ fn write_stdout(text: &str) -> std::io::Result<()> {
     stdout.flush()
 }
 
-fn write_pid_file(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        log::warn(format!(
-            "pid file {} already exists; overwriting",
-            path.display()
-        ));
-    }
-    std::fs::write(path, format!("{}\n", std::process::id()))
-        .map_err(|error| format!("cannot write pid file {}: {error}", path.display()))
+/// Exclusive pid file.
+///
+/// Created with O_EXCL, so two daemons can never both claim it; a leftover
+/// file is only taken over once its pid is proven dead. Drop removes the file,
+/// and only while it still holds our own pid (never a successor's).
+#[derive(Debug)]
+struct PidFile {
+    path: PathBuf,
 }
 
-fn remove_pid_file(path: &Path) {
-    if let Ok(contents) = std::fs::read_to_string(path) {
-        if contents.trim() == std::process::id().to_string() {
-            let _ = std::fs::remove_file(path);
+impl PidFile {
+    fn acquire(path: &Path) -> Result<Self, String> {
+        let dir = parent_dir(path);
+        if !dir.is_dir() {
+            return Err(format!(
+                "pid file directory {} does not exist",
+                dir.display()
+            ));
+        }
+        let pid = std::process::id();
+        for attempt in 0..2 {
+            match OpenOptions::new().write(true).create_new(true).open(path) {
+                Ok(mut file) => {
+                    file.write_all(format!("{pid}\n").as_bytes())
+                        .and_then(|()| file.sync_all())
+                        .map_err(|error| {
+                            let _ = std::fs::remove_file(path);
+                            format!("cannot write pid file {}: {error}", path.display())
+                        })?;
+                    return Ok(Self {
+                        path: path.to_path_buf(),
+                    });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    if attempt > 0 {
+                        break;
+                    }
+                    match read_pid(path) {
+                        Some(holder) if pid_alive(holder) => {
+                            return Err(format!(
+                                "{} is already held by running process {holder}",
+                                path.display()
+                            ));
+                        }
+                        _ => {
+                            log::warn(format!(
+                                "removing stale pid file {} (no live process owns it)",
+                                path.display()
+                            ));
+                            let _ = std::fs::remove_file(path);
+                        }
+                    }
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "cannot create pid file {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        Err(format!(
+            "cannot create pid file {}: still present after removing the stale copy",
+            path.display()
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PidFile {
+    fn drop(&mut self) {
+        if read_pid(&self.path) == Some(std::process::id()) {
+            let _ = std::fs::remove_file(&self.path);
         }
     }
 }
 
-fn write_snapshot(path: &Path, contents: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
+fn read_pid(path: &Path) -> Option<u32> {
+    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+/// Whether the pid names a live process. A recycled pid can make a stale file
+/// look live; that only costs the operator a manual delete.
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: signal 0 performs only the existence/permission check.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    if result == 0 {
+        return true;
+    }
+    // EPERM means the process exists but belongs to another user.
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(windows)]
+fn pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // GetExitCodeProcess reports 259 (STILL_ACTIVE) while the process runs.
+    const STILL_ACTIVE_CODE: u32 = 259;
+
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: handles returned by OpenProcess are closed below; the pid comes
+    // from our own pid file.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            // Access denied still means a live process owns the pid.
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        let _ = CloseHandle(handle);
+        ok && code == STILL_ACTIVE_CODE
+    }
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn pid_alive(_pid: u32) -> bool {
+    false
+}
+
+fn parent_dir(path: &Path) -> &Path {
+    path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// The output file's parent directory must exist: the file itself is replaced
+/// on every write, so a read-only directory is the failure mode that matters.
+fn validate_output_path(path: &Path) -> Result<(), String> {
+    let dir = parent_dir(path);
+    if !dir.is_dir() {
+        return Err(format!("output directory {} does not exist", dir.display()));
+    }
+    if path.is_dir() {
+        return Err(format!("output path {} is a directory", path.display()));
+    }
+    probe_dir_writable(dir)
+}
+
+fn validate_pid_path(path: &Path) -> Result<(), String> {
+    let dir = parent_dir(path);
+    if !dir.is_dir() {
+        return Err(format!(
+            "pid file directory {} does not exist",
+            dir.display()
+        ));
+    }
+    probe_dir_writable(dir)?;
+    if let Some(holder) = read_pid(path) {
+        if pid_alive(holder) {
+            return Err(format!(
+                "{} is already held by running process {holder}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Bind and immediately release the address: proves the port is free and that
+/// the local interface exists, without leaving anything listening.
+fn validate_listen(address: std::net::SocketAddr) -> Result<(), String> {
+    match std::net::TcpListener::bind(address) {
+        Ok(listener) => {
+            drop(listener);
+            Ok(())
+        }
+        Err(error) => Err(format!("cannot bind {address}: {error}")),
+    }
+}
+
+fn probe_dir_writable(dir: &Path) -> Result<(), String> {
+    let probe = dir.join(format!(
+        ".{NAME}-write-test.{}.{}",
+        std::process::id(),
+        log::now_epoch_ms()
+    ));
+    match OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "directory {} is not writable: {error}",
+            dir.display()
+        )),
+    }
+}
+
+fn write_snapshot(path: &Path, contents: &str) -> Result<(), String> {
+    let parent = parent_dir(path);
     if !parent.is_dir() {
         return Err(format!(
             "output directory {} does not exist",
@@ -461,6 +969,99 @@ mod tests {
         assert_eq!(snapshot.summary.offline, 1);
         assert_eq!(snapshot.summary.down, 1);
         assert!(snapshot.to_json().contains("\"type\":\"snapshot\""));
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("netstudio-headless-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        directory
+    }
+
+    #[test]
+    fn readiness_waits_for_every_target() {
+        let state = State::new(2);
+        state.update(vec![tracker(1, true).snapshot()]);
+        // One of two targets has sampled: still not ready.
+        assert!(!state.ready());
+        state.update(vec![
+            tracker(1, true).snapshot(),
+            tracker(2, true).snapshot(),
+        ]);
+        assert!(state.ready());
+        // A target that sampled but failed is still a sample: ready.
+        state.update(vec![
+            tracker(1, true).snapshot(),
+            tracker(2, false).snapshot(),
+        ]);
+        assert!(state.ready());
+    }
+
+    #[test]
+    fn summary_counts_muted_targets() {
+        let mut muted = tracker(1, false);
+        muted = muted.with_organization("edge".to_string(), true);
+        let snapshot = Snapshot::new(vec![muted.snapshot(), tracker(2, false).snapshot()]);
+        assert_eq!(snapshot.summary.muted, 1);
+        // Muted does not hide the failure from the snapshot itself.
+        assert_eq!(snapshot.summary.down, 2);
+        assert!(snapshot.to_json().contains("\"muted\":1"));
+    }
+
+    #[test]
+    fn output_path_is_validated_before_use() {
+        let directory = temp_dir("output");
+        let path = directory.join("status.json");
+        assert!(validate_output_path(&path).is_ok());
+        let missing = directory.join("nope").join("status.json");
+        let error = validate_output_path(&missing).expect_err("missing dir");
+        assert!(error.contains("does not exist"), "{error}");
+        let error = validate_output_path(&directory).expect_err("directory");
+        assert!(error.contains("is a directory"), "{error}");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn pid_file_is_exclusive_and_releases_on_drop() {
+        let directory = temp_dir("pid");
+        let path = directory.join("headless.pid");
+        let guard = PidFile::acquire(&path).expect("acquire");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read").trim(),
+            std::process::id().to_string()
+        );
+        // A second daemon in the same process is refused, not allowed to steal it.
+        let error = PidFile::acquire(&path).expect_err("second acquire");
+        assert!(error.contains("already held"), "{error}");
+        drop(guard);
+        assert!(!path.exists(), "drop must remove the pid file");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn stale_pid_file_is_taken_over() {
+        let directory = temp_dir("stale-pid");
+        let path = directory.join("headless.pid");
+        // No live process can own this pid on either platform.
+        std::fs::write(&path, "4000000000\n").expect("write stale");
+        let guard = PidFile::acquire(&path).expect("take over");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read").trim(),
+            std::process::id().to_string()
+        );
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn pid_validation_rejects_a_live_holder() {
+        let directory = temp_dir("pid-live");
+        let path = directory.join("headless.pid");
+        // Our own pid is definitely alive; the daemon must refuse to start.
+        std::fs::write(&path, format!("{}\n", std::process::id())).expect("write");
+        let error = validate_pid_path(&path).expect_err("live holder");
+        assert!(error.contains("already held"), "{error}");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

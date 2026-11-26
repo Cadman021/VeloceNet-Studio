@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::log;
 use super::{metrics, State, NAME, VERSION};
 
 /// Fixed worker pool: a slow or malicious client can pin at most this many
@@ -24,6 +25,8 @@ struct Response {
     content_type: &'static str,
     body: Vec<u8>,
     allow: Option<&'static str>,
+    /// Sent on 401 so a client knows which scheme to use.
+    challenge: Option<&'static str>,
 }
 
 impl Response {
@@ -34,6 +37,7 @@ impl Response {
             content_type: "text/plain; charset=utf-8",
             body: body.into_bytes(),
             allow: None,
+            challenge: None,
         }
     }
 
@@ -44,6 +48,7 @@ impl Response {
             content_type: "application/json; charset=utf-8",
             body: body.into_bytes(),
             allow: None,
+            challenge: None,
         }
     }
 }
@@ -57,7 +62,14 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn spawn(addr: SocketAddr, state: Arc<State>) -> std::io::Result<Self> {
+    /// A token turns every endpoint except /healthz into a 401 unless the
+    /// request carries "Authorization: Bearer <token>"; None keeps the old
+    /// unauthenticated behaviour that callers secure with binding and a proxy.
+    pub fn spawn(
+        addr: SocketAddr,
+        state: Arc<State>,
+        token: Option<Arc<str>>,
+    ) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
         let local = listener.local_addr()?;
@@ -70,10 +82,12 @@ impl Server {
             let worker_state = state.clone();
             let worker_receiver = receiver.clone();
             let worker_shutdown = shutdown.clone();
+            let worker_token = token.clone();
             let handle = match thread::Builder::new()
                 .name(format!("netstudio-http-worker-{index}"))
-                .spawn(move || worker_loop(worker_receiver, worker_state, worker_shutdown))
-            {
+                .spawn(move || {
+                    worker_loop(worker_receiver, worker_state, worker_shutdown, worker_token)
+                }) {
                 Ok(handle) => handle,
                 Err(error) => {
                     shutdown.store(true, Ordering::SeqCst);
@@ -174,6 +188,7 @@ fn worker_loop(
     receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>,
     state: Arc<State>,
     shutdown: Arc<AtomicBool>,
+    token: Option<Arc<str>>,
 ) {
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -186,7 +201,7 @@ fn worker_loop(
             receiver.recv_timeout(Duration::from_millis(200))
         };
         match job {
-            Ok(stream) => handle_connection(stream, &state),
+            Ok(stream) => handle_connection(stream, &state, token.as_deref()),
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -200,7 +215,7 @@ enum ReadError {
     Timeout,
 }
 
-fn handle_connection(mut stream: TcpStream, state: &State) {
+fn handle_connection(mut stream: TcpStream, state: &State, token: Option<&str>) {
     let request = match read_request(&mut stream) {
         Ok(request) => request,
         Err(error) => {
@@ -249,9 +264,7 @@ fn handle_connection(mut stream: TcpStream, state: &State) {
     let path = target.split("?").next().unwrap_or("");
     let path = path.split("#").next().unwrap_or("");
     let head_only = method.eq_ignore_ascii_case("HEAD");
-    let response = if method.eq_ignore_ascii_case("GET") || head_only {
-        route(path, state)
-    } else {
+    let response = if !(method.eq_ignore_ascii_case("GET") || head_only) {
         Response {
             allow: Some("GET, HEAD"),
             ..Response::text(
@@ -260,8 +273,65 @@ fn handle_connection(mut stream: TcpStream, state: &State) {
                 "method not allowed\n".to_string(),
             )
         }
+    } else if let Some(expected) = token {
+        // /healthz stays open: container and systemd probes usually cannot
+        // send headers, and it reveals nothing about the targets.
+        if path == "/healthz" || authorized(&request, expected) {
+            route(path, state)
+        } else {
+            Response {
+                challenge: Some("Bearer realm=\"netstudio\""),
+                ..Response::text(
+                    401,
+                    "Unauthorized",
+                    "missing or invalid token\n".to_string(),
+                )
+            }
+        }
+    } else {
+        route(path, state)
     };
     write_response(&mut stream, &response, head_only);
+}
+
+/// Case-insensitive header lookup on the raw request head.
+fn header<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    request
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| {
+            let (header_name, value) = line.split_once(':')?;
+            if header_name.trim().eq_ignore_ascii_case(name) {
+                Some(value.trim())
+            } else {
+                None
+            }
+        })
+}
+
+fn authorized(request: &str, expected: &str) -> bool {
+    let Some(value) = header(request, "authorization") else {
+        return false;
+    };
+    let Some((scheme, presented)) = value.split_once(' ') else {
+        return false;
+    };
+    scheme.eq_ignore_ascii_case("bearer")
+        && constant_time_eq(presented.trim().as_bytes(), expected.as_bytes())
+}
+
+/// Length is public, contents are not: compare every byte so a wrong token
+/// cannot be guessed from response timing.
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (a, b) in left.iter().zip(right) {
+        difference |= a ^ b;
+    }
+    difference == 0
 }
 
 fn read_request(stream: &mut TcpStream) -> Result<String, ReadError> {
@@ -328,15 +398,21 @@ fn route(path: &str, state: &State) -> Response {
 
 fn write_response(stream: &mut TcpStream, response: &Response, head_only: bool) {
     let mut header = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n",
+        "HTTP/1.1 {} {}\r\nDate: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n",
         response.status,
         response.reason,
+        log::http_date(log::now_epoch_ms()),
         response.content_type,
         response.body.len()
     );
     if let Some(allow) = response.allow {
         header.push_str("Allow: ");
         header.push_str(allow);
+        header.push_str("\r\n");
+    }
+    if let Some(challenge) = response.challenge {
+        header.push_str("WWW-Authenticate: ");
+        header.push_str(challenge);
         header.push_str("\r\n");
     }
     header.push_str("\r\n");
@@ -367,7 +443,29 @@ mod tests {
     }
 
     fn start(state: Arc<State>) -> Server {
-        Server::spawn("127.0.0.1:0".parse().expect("loopback"), state).expect("spawn")
+        start_with_token(state, None)
+    }
+
+    fn start_with_token(state: Arc<State>, token: Option<&str>) -> Server {
+        Server::spawn(
+            "127.0.0.1:0".parse().expect("loopback"),
+            state,
+            token.map(Arc::from),
+        )
+        .expect("spawn")
+    }
+
+    fn request_with_header(server: &Server, path: &str, header: &str) -> String {
+        let mut stream = TcpStream::connect(server.addr()).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let request =
+            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n{header}Connection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).expect("write");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read");
+        response
     }
 
     fn request(server: &Server, method: &str, path: &str) -> String {
@@ -391,10 +489,51 @@ mod tests {
     }
 
     #[test]
+    fn a_bearer_token_guards_everything_but_healthz() {
+        let server = start_with_token(state_with_sample(), Some("s3cret"));
+
+        let unauthorized = request(&server, "GET", "/metrics");
+        assert!(unauthorized.starts_with("HTTP/1.1 401"), "{unauthorized}");
+        assert!(
+            unauthorized.contains("WWW-Authenticate: Bearer"),
+            "{unauthorized}"
+        );
+        assert!(!unauthorized.contains("netstudio_build_info"));
+
+        let wrong = request_with_header(&server, "/metrics", "Authorization: Bearer nope\r\n");
+        assert!(wrong.starts_with("HTTP/1.1 401"), "{wrong}");
+
+        let wrong_scheme =
+            request_with_header(&server, "/metrics", "Authorization: Basic s3cret\r\n");
+        assert!(wrong_scheme.starts_with("HTTP/1.1 401"), "{wrong_scheme}");
+
+        let allowed = request_with_header(&server, "/metrics", "Authorization: Bearer s3cret\r\n");
+        assert!(allowed.starts_with("HTTP/1.1 200"), "{allowed}");
+        assert!(allowed.contains("netstudio_build_info"), "{allowed}");
+
+        // Header names are case-insensitive.
+        let lowercase = request_with_header(
+            &server,
+            "/api/v1/status",
+            "authorization: bearer s3cret\r\n",
+        );
+        assert!(lowercase.starts_with("HTTP/1.1 200"), "{lowercase}");
+
+        // Liveness probes cannot send headers, readiness must be guarded.
+        assert!(request(&server, "GET", "/healthz").starts_with("HTTP/1.1 200"));
+        assert!(request(&server, "GET", "/readyz").starts_with("HTTP/1.1 401"));
+    }
+
+    #[test]
     fn health_and_index_are_served() {
         let server = start(State::new(1));
         let health = request(&server, "GET", "/healthz");
         assert!(health.starts_with("HTTP/1.1 200 OK\r\n"));
+        // Proxies and clients (curl -I) expect a Date header in HTTP/1.1.
+        assert!(
+            health.contains("\r\nDate: ") && health.contains(" GMT\r\n"),
+            "{health}"
+        );
         assert_eq!(body(&health), "ok\n");
         let index = request(&server, "GET", "/");
         assert!(index.contains("netstudio-headless"));
