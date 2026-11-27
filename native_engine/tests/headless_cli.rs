@@ -544,6 +544,123 @@ fn windows_service_mode_refuses_a_console_start() {
 }
 
 #[test]
+fn health_check_exit_code_follows_the_http_status() {
+    use std::net::TcpStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    // A closed port fails fast and needs no daemon: that is the "unhealthy"
+    // answer Docker relies on.
+    let closed = {
+        let probe = TcpListener::bind("127.0.0.1:0").expect("bind");
+        probe.local_addr().expect("addr").port()
+    };
+    let url = format!("http://127.0.0.1:{closed}/readyz");
+    let refused = run(&["--health-check".as_ref(), std::ffi::OsStr::new(&url)]);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("cannot connect"),
+        "stderr: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind target");
+    let target_port = listener.local_addr().expect("addr").port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_accept = Arc::clone(&stop);
+    let accept = thread::spawn(move || {
+        listener.set_nonblocking(true).expect("nonblocking");
+        while !stop_accept.load(Ordering::Relaxed) {
+            if listener.accept().is_err() {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    });
+    let http_port = {
+        let probe = TcpListener::bind("127.0.0.1:0").expect("bind http");
+        probe.local_addr().expect("addr").port()
+    };
+
+    let dir = temp_dir();
+    let config = write_config(
+        &dir,
+        serde_json::json!({
+            "id": 1,
+            "host": "127.0.0.1",
+            "port": target_port,
+            "protocol": "TCP",
+            "interval_ms": 200,
+            "timeout_ms": 1_000
+        }),
+    );
+    let token_path = dir.join("token");
+    fs::write(&token_path, "s3cret\n").expect("token");
+    let listen = format!("127.0.0.1:{http_port}");
+    let mut child = Command::new(binary())
+        .args([
+            "--config".as_ref(),
+            config.as_os_str(),
+            "--listen".as_ref(),
+            std::ffi::OsStr::new(&listen),
+            "--http-token-file".as_ref(),
+            token_path.as_os_str(),
+            "--interval".as_ref(),
+            "1".as_ref(),
+            "--quiet".as_ref(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn daemon");
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut listening = false;
+    while Instant::now() < deadline {
+        if TcpStream::connect(("127.0.0.1", http_port)).is_ok() {
+            listening = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(listening, "daemon never listened on {listen}");
+
+    // 401 without the token: the check must fail, not ignore auth.
+    let url = format!("http://127.0.0.1:{http_port}/readyz");
+    let anonymous = run(&["--health-check".as_ref(), std::ffi::OsStr::new(&url)]);
+    assert_eq!(anonymous.status.code(), Some(1), "{anonymous:?}");
+    assert!(
+        String::from_utf8_lossy(&anonymous.stderr).contains("401"),
+        "stderr: {}",
+        String::from_utf8_lossy(&anonymous.stderr)
+    );
+
+    // With the token it waits for readiness instead of failing immediately.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut ready = false;
+    while Instant::now() < deadline {
+        let output = run(&[
+            "--health-check".as_ref(),
+            std::ffi::OsStr::new(&url),
+            "--http-token-file".as_ref(),
+            token_path.as_os_str(),
+        ]);
+        if output.status.code() == Some(0) {
+            ready = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(ready, "health-check never saw a 200 from {url}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+    stop.store(true, Ordering::Relaxed);
+    let _ = accept.join();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn log_file_receives_every_line_in_plain_text() {
     let dir = temp_dir();
     let config = write_config(

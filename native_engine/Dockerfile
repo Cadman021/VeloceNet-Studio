@@ -37,6 +37,13 @@ USER netstudio
 WORKDIR /var/lib/netstudio
 EXPOSE 9101
 
+# The image has no curl or wget, so the daemon checks itself: --health-check
+# GETs /readyz and exits 0 only on 200. Override HEALTHCHECK if you publish a
+# different port. With --http-token-file this probe cannot read the file;
+# set NETSTUDIO_HTTP_TOKEN instead, which the server and this client share.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["/usr/local/bin/netstudio-headless", "--health-check", "http://127.0.0.1:9101/readyz"]
+
 # Exec form: the daemon receives SIGTERM directly and stops gracefully.
 ENTRYPOINT ["/usr/local/bin/netstudio-headless"]
 CMD ["--config", "/etc/netstudio/targets.json", "--listen", "0.0.0.0:9101", "--output", "/var/lib/netstudio/status.json", "--log-format", "json"]

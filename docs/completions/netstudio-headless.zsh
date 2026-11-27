@@ -4,6 +4,7 @@
 _arguments -s \
   '(-c --config)'{-c,--config}'[Target configuration file]:file:_files' \
   '--check[Validate config, paths and listen address, then exit]' \
+  '--health-check[GET URL and exit 0 only on 200]:url:' \
   '--once[Probe every target once, print a snapshot, exit]' \
   '--interval[Snapshot interval in seconds]:seconds:' \
   '--probe-interval[Probe cadence override in seconds]:seconds:' \

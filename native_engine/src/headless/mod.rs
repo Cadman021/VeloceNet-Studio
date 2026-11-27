@@ -6,6 +6,7 @@
 
 mod cli;
 mod config;
+mod healthcheck;
 mod http;
 mod log;
 mod metrics;
@@ -309,6 +310,10 @@ fn run(cli: cli::Cli) -> i32 {
     if cli.version {
         println!("{NAME} {VERSION}");
         return EXIT_OK;
+    }
+    // A client check needs no config: it exits on its own after one request.
+    if let Some(url) = &cli.health_check {
+        return healthcheck::main(url, cli.http_token_file.as_deref());
     }
     if cli.windows_service {
         return run_as_windows_service(cli);

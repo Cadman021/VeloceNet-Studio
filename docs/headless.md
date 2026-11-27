@@ -49,6 +49,44 @@ without it, ICMP targets fall back to TCP or report a permission error while
 TCP/HTTP/HTTPS targets keep working. Mount a token file and add
 `--http-token-file` when the port is published beyond `127.0.0.1`.
 
+The image ships a `HEALTHCHECK` that runs the binary itself — there is no curl
+or wget inside — against `http://127.0.0.1:9101/readyz`:
+
+```bash
+docker run -d --name netstudio -p 9101:9101 --cap-add NET_RAW \
+  -v "$PWD/targets.json:/etc/netstudio/targets.json:ro" netstudio-headless:1.6.0
+docker inspect --format '{{.State.Health.Status}}' netstudio   # healthy
+```
+
+`healthy` therefore means `/readyz` answered `200` — every target has a
+sample — not merely that the process is alive. If you change `CMD` to listen
+on another port, override `HEALTHCHECK` too. With `--http-token-file`, pass the
+token as `NETSTUDIO_HTTP_TOKEN` instead: the server and the built-in client
+both read it, whereas a file path is only visible to the server.
+
+### Kubernetes
+
+`deploy/kubernetes/` has a `ConfigMap` (an exported targets file), a
+`Deployment` and a `Service`:
+
+```bash
+docker build -f native_engine/Dockerfile -t netstudio-headless:1.6.0 .
+kubectl apply -f deploy/kubernetes/
+kubectl port-forward svc/netstudio-headless 9101:9101
+```
+
+The pod runs as uid `10001` with `readOnlyRootFilesystem`, keeps its snapshot
+in an `emptyDir`, and gets `NET_RAW` only because ICMP may need it. `liveness`
+probes `/healthz` (a network outage must not restart the pod) while
+`readiness` probes `/readyz` (a pod that cannot reach its targets stays out of
+the Service). `--watch-config 60` picks up a re-applied `ConfigMap` without a
+restart; kubelet never sends `SIGHUP`.
+
+If you enable `--http-token-file`, kubelet cannot send the token: switch the
+readiness probe to an `exec` one that runs `--health-check` with
+`NETSTUDIO_HTTP_TOKEN` from a `Secret` — `deploy/kubernetes/README.md` shows
+the exact YAML.
+
 ### Man page and shell completions
 
 `docs/netstudio-headless.1` documents every flag and exit code;
@@ -242,11 +280,11 @@ and Prometheus labels.
 ### Validate before deploying
 
 `--check` answers "would this start right now?" without probing or listening:
-it parses the file, checks that the `--output` and `--pid-file` directories
-exist and are writable (and that a `--pid-file` is not held by a live
-process), and binds `--listen` once. Any failure exits `2`, so a CI job or a
-systemd `ExecStartPre` catches a bad mount or a taken port before the service
-goes into a restart loop.
+it parses the file, checks that the `--output`, `--pid-file` and `--log-file`
+directories exist and are writable (and that a `--pid-file` is not held by a
+live process), and binds `--listen` once. Any failure exits `2`, so a CI job
+or a systemd `ExecStartPre` catches a bad mount or a taken port before the
+service goes into a restart loop.
 
 ```text
 $ netstudio-headless -c docs/examples/targets.json --check --output /tmp/status.json
@@ -274,6 +312,7 @@ netstudio-headless --config targets.json --interval 15 --probe-concurrency 32 --
 |---|---|
 | `-c`, `--config <PATH>` | Target file (required for run/check/once) |
 | `--check` | Validate the file, output/pid paths, and listen address, then exit |
+| `--health-check <URL>` | GET an `http://` URL and exit `0` only on `200`; for container health checks |
 | `--once` | Probe every target once, print a snapshot, exit |
 | `--interval <SECS>` | Snapshot interval, 1–3600 (default 5) |
 | `--probe-interval <SECS>` | Probe every target this often, overriding each `interval_ms` (1–3600) |
@@ -306,6 +345,14 @@ suppress the `--once` result. It returns:
   nothing on this path;
 * `1` — runtime failure after startup (for example the output directory is
   removed while the daemon is running, or the HTTP server fails).
+
+`--health-check <URL>` is the one mode that needs no `--config`: it sends a
+single `GET` and exits `0` on `200`, `1` on any other status or transport
+failure, and `2` for a URL it cannot parse (including `https://`, which would
+need a proxy). `--http-token-file` (or `NETSTUDIO_HTTP_TOKEN`) supplies the
+bearer token, so it also works against a daemon with authentication enabled;
+it cannot be combined with `--once`, `--check`, `--listen`, `--output`,
+`--pid-file`, `--watch-config` or `--windows-service`.
 
 `--listen`, `--pid-file` and `--http-token-file` are daemon options; combining
 them with `--once` is rejected with exit `2` instead of being silently ignored.

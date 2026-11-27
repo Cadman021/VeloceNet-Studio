@@ -35,6 +35,8 @@ pub const HELP: &str = concat!(
     "\n",
     "Options:\n",
     "  -c, --config <PATH>     Target configuration file (required)\n",
+    "      --health-check <URL>  GET URL (http:// only) and exit 0 only on 200;\n",
+    "                          for container HEALTHCHECK entries\n",
     "      --check             Validate the configuration (and --output,\n",
     "                          --pid-file, --log-file, --listen, auth when\n",
     "                          given), then exit\n",
@@ -105,6 +107,8 @@ pub struct Cli {
     pub log_format: log::Format,
     /// Also append logs here; a Windows service has no stderr to read.
     pub log_file: Option<PathBuf>,
+    /// One-shot client check: GET this URL and exit 0 only on 200.
+    pub health_check: Option<String>,
 }
 
 impl Default for Cli {
@@ -130,6 +134,7 @@ impl Default for Cli {
             log_level: Level::Info,
             log_format: log::Format::Text,
             log_file: None,
+            health_check: None,
         }
     }
 }
@@ -259,6 +264,9 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
             "--log-file" => {
                 cli.log_file = Some(PathBuf::from(take_value(&flag, inline, args, &mut index)?));
             }
+            "--health-check" => {
+                cli.health_check = Some(take_value(&flag, inline, args, &mut index)?);
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
         index += 1;
@@ -279,6 +287,25 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         return Err(
             "--watch-config is a daemon option and cannot be combined with --once".to_string(),
         );
+    }
+    // --health-check is a standalone client: it must not run a daemon, probe
+    // targets or wait for a config file.
+    if cli.health_check.is_some() {
+        for (flag, present) in [
+            ("--once", cli.once),
+            ("--check", cli.check),
+            ("--listen", cli.listen.is_some()),
+            ("--pid-file", cli.pid_file.is_some()),
+            ("--output", cli.output.is_some()),
+            ("--watch-config", cli.watch_config_secs.is_some()),
+            ("--windows-service", cli.windows_service),
+        ] {
+            if present {
+                return Err(format!(
+                    "--health-check cannot be combined with {flag}: it only makes one request and exits"
+                ));
+            }
+        }
     }
     if cli.once && cli.windows_service {
         return Err(

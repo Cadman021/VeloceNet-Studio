@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netstudio-headless
+  labels:
+    app.kubernetes.io/name: netstudio-headless
+spec:
+  # One replica per config: each instance probes independently, so more
+  # replicas just multiply the probe traffic instead of sharing state.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: netstudio-headless
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: netstudio-headless
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9101"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: daemon
+          image: netstudio-headless:1.6.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config
+            - /etc/netstudio/targets.json
+            - --listen
+            - 0.0.0.0:9101
+            - --output
+            - /var/lib/netstudio/status.json
+            # kubelet never sends SIGHUP, so poll the mounted ConfigMap, which
+            # changes when the ConfigMap does.
+            - --watch-config
+            - "60"
+            - --log-format
+            - json
+          ports:
+            - name: http
+              containerPort: 9101
+          readinessProbe:
+            # /readyz is strict: 503 until every target has a sample, so a
+            # pod that cannot reach its targets never receives traffic.
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            # /healthz stays 200 while the loop runs: a deadlock is restarted,
+            # a network outage is not (that is readiness' job).
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              # ICMP needs a raw socket. Kubernetes grants NET_RAW by default,
+              # but dropping ALL makes it explicit; remove this if the config
+              # has no ICMP targets.
+              add: ["NET_RAW"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/netstudio
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/netstudio
+      volumes:
+        - name: config
+          configMap:
+            name: netstudio-targets
+        - name: state
+          emptyDir: {}

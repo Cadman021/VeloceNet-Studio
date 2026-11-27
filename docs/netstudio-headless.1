@@ -33,6 +33,13 @@ paths and the
 .B \-\-listen
 address, then exit without probing.
 .TP
+.BI \-\-health\-check " " URL
+Send one GET to URL (http:// only) and exit 0 only on 200, 1 on another status
+or a transport error, 2 for an unusable URL. Needs no config; the token comes
+from
+.B \-\-http\-token\-file
+or NETSTUDIO_HTTP_TOKEN. For container health checks.
+.TP
 .B \-\-once
 Probe every target once, print a snapshot, and exit. Exit status 3 means at
 least one non-muted target is down.
