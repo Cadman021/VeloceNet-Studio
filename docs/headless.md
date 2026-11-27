@@ -63,6 +63,10 @@ sample — not merely that the process is alive. If you change `CMD` to listen
 on another port, override `HEALTHCHECK` too. With `--http-token-file`, pass the
 token as `NETSTUDIO_HTTP_TOKEN` instead: the server and the built-in client
 both read it, whereas a file path is only visible to the server.
+CI builds this image and boots it on every push (preflight, `/healthz`,
+`/readyz`, `/metrics`, the event feed and its own `HEALTHCHECK`), so a
+broken `COPY` or an image that cannot run unprivileged fails the run instead
+of the deployment.
 
 ### Kubernetes
 
@@ -126,8 +130,8 @@ their `Cargo.lock` checksums.
 
 ### Man page and shell completions
 
-`docs/netstudio-headless.1` documents every flag and exit code;
-`docs/completions/netstudio-headless.bash` and
+`docs/netstudio-headless.1` documents every flag, exit code and HTTP
+endpoint; `docs/completions/netstudio-headless.bash` and
 `docs/completions/netstudio-headless.zsh` complete flags, choice values and
 file paths. Install them wherever the platform expects:
 
@@ -138,6 +142,17 @@ sudo install -m 644 docs/completions/netstudio-headless.bash \
 sudo install -m 644 docs/completions/netstudio-headless.zsh \
   /usr/local/share/zsh/site-functions/_netstudio-headless
 ```
+
+The .deb and .rpm install all three, so `man netstudio-headless` works
+after `apt install` or `dnf install`.
+
+They cannot drift from the binary: `tool/headless-docs-check.py` reads the
+flag table in `native_engine/src/headless/cli.rs` and fails when a flag is
+missing from the man page or a completion, when either documents a flag the
+binary does not accept, when an option block is duplicated, or when the
+`.TH` version disagrees with `Cargo.toml`. CI runs it, renders the page with
+groff and fails on troff warnings or invalid completion syntax, so a page
+that only looks right in an editor is not enough.
 
 ## Quick start
 

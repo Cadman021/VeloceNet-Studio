@@ -15,7 +15,7 @@ a one-shot probe
 a preflight validation
 .RB ( \-\-check ),
 and a daemon that streams snapshots, writes a status file and serves HTTP for
-health checks and Prometheus scraping.
+health checks, Prometheus scraping and the alert feed.
 .PP
 The daemon stops gracefully on SIGINT/SIGTERM and reloads its configuration on
 SIGHUP (Unix).
@@ -57,6 +57,13 @@ Maximum probes in flight, 1 to 256 (default 32).
 Poll the config file every 1 to 3600 seconds and reload it when it changes.
 Daemon mode only; useful where SIGHUP cannot be delivered.
 .TP
+.BI \-\-listen " " ADDR
+Serve HTTP on ADDR, for example
+.IR 127.0.0.1:9101 .
+Daemon mode only; see
+.B HTTP ENDPOINTS
+below.
+.TP
 .BI \-\-output " " PATH
 Atomically replace PATH with the latest JSON snapshot.
 .TP
@@ -67,10 +74,6 @@ Daemon mode only.
 .BI \-\-http\-token\-file " " PATH
 Require "Authorization: Bearer <token>" on every HTTP endpoint except
 /healthz; the token is read from PATH. Daemon mode only.
-.TP
-.BR \-\-windows\-service
-Let the Windows Service Control Manager own the process. Daemon mode, Windows
-only; started from a shell it exits 2 instead of probing invisibly.
 .TP
 .BR \-\-windows\-service
 Let the Windows Service Control Manager own the process. Daemon mode, Windows
@@ -117,6 +120,34 @@ is not given.
 .B NO_COLOR
 Disable ANSI colour, like
 .BR "\-\-color never" .
+.SH HTTP ENDPOINTS
+Served on
+.B \-\-listen .
+Everything but
+.I /healthz
+needs the
+.B \-\-http\-token\-file
+bearer token when one is configured.
+.TP
+.I /healthz
+Always open, for container and systemd probes.
+.TP
+.I /readyz
+503 until every target has one sample.
+.TP
+.I /metrics
+Prometheus text format.
+.TP
+.I /api/v1/status
+The latest snapshot as JSON.
+.TP
+.I /api/v1/events?since=\fISEQ\fR
+Alert feed: the
+.B down
+and
+.B up
+transitions after SEQ, with a monotonic cursor and a count of any the
+buffer dropped.
 .SH SIGNALS
 .TP
 .B SIGHUP
@@ -160,7 +191,7 @@ skips the target rather than falling back to ICMP.
 netstudio-headless \-c targets.json \-\-check
 Preflight a configuration and its paths.
 .TP
-netstudio-headless \-c targets.json \-q \-\-output /var/lib/netstudio/status.json \\\\
+netstudio-headless \-c targets.json \-q \-\-output /var/lib/netstudio/status.json \\
 \-\-listen 127.0.0.1:9101 \-\-pid\-file /run/netstudio/headless.pid
 Run the daemon with a status file and Prometheus endpoint.
 .SH SEE ALSO
