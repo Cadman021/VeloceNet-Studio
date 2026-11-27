@@ -7,7 +7,7 @@ _netstudio_headless() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     case "$prev" in
-        -c|--config|--output|--pid-file|--http-token-file)
+        -c|--config|--output|--pid-file|--http-token-file|--log-file)
             COMPREPLY=( $(compgen -f -- "$cur") )
             return 0
             ;;
@@ -40,7 +40,7 @@ _netstudio_headless() {
     local options="
         -c --config --check --once --interval --probe-interval
         --probe-concurrency --watch-config --listen --output --pid-file
-        --http-token-file
+        --http-token-file --log-file
         -q --quiet --format --color --no-color --log-level --log-format
         -h --help -V --version
     "

@@ -1,7 +1,15 @@
 //! Dependency-free stderr logging and RFC 3339 timestamps for headless mode.
 
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// One generation of rotation: an unattended service cannot be allowed to
+/// fill a disk, and a full ring of two files is enough to diagnose a restart.
+const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
@@ -80,30 +88,142 @@ pub fn log(level: Level, message: impl AsRef<str>) {
     if !enabled(level) {
         return;
     }
-    let line = if FORMAT.load(Ordering::Relaxed) == Format::Json as u8 {
-        json_line(level, message.as_ref())
+    let (stderr_line, file_line) = if FORMAT.load(Ordering::Relaxed) == Format::Json as u8 {
+        let line = json_line(level, message.as_ref());
+        (line.clone(), line)
     } else {
-        text_line(level, message.as_ref())
+        // Without colour for the file even when stderr is a terminal.
+        (
+            text_line(level, message.as_ref(), true),
+            text_line(level, message.as_ref(), false),
+        )
     };
-    eprintln!("{line}");
+    eprintln!("{stderr_line}");
+    if let Some(sink) = SINK.get() {
+        // A panic in another thread must not silence the log file.
+        let mut sink = sink.lock().unwrap_or_else(|error| error.into_inner());
+        if let Err(error) = sink.write(&file_line) {
+            if !sink.failed {
+                sink.failed = true;
+                eprintln!(
+                    "{} ERROR  cannot write the log file {}: {error}",
+                    rfc3339_now(),
+                    sink.path.display()
+                );
+            }
+        }
+    }
 }
 
-fn text_line(level: Level, message: &str) -> String {
+/// Mirrors every line to `path`, rotating to `<path>.1` past 8 MiB.
+/// Called once at startup; a failure is a config error, not a warning.
+pub fn open_file(path: &Path) -> Result<(), String> {
+    let sink = Sink::open(path)?;
+    SINK.set(Mutex::new(sink))
+        .map_err(|_| "the log file is already open".to_string())
+}
+
+static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
+
+struct Sink {
+    path: PathBuf,
+    file: File,
+    size: u64,
+    limit: u64,
+    /// Set after the first failed write so one broken path logs once.
+    failed: bool,
+}
+
+impl Sink {
+    fn open(path: &Path) -> Result<Self, String> {
+        if path.is_dir() {
+            return Err(format!("log path {} is a directory", path.display()));
+        }
+        let size = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        let mut sink = Self {
+            path: path.to_path_buf(),
+            file: Self::append(path, false)?,
+            size,
+            limit: MAX_LOG_BYTES,
+            failed: false,
+        };
+        if sink.size >= sink.limit {
+            sink.rotate()?;
+        }
+        Ok(sink)
+    }
+
+    fn append(path: &Path, truncate: bool) -> Result<File, String> {
+        let mut options = OpenOptions::new();
+        options.write(true).create(true);
+        if truncate {
+            options.truncate(true);
+        } else {
+            options.append(true);
+        }
+        options
+            .open(path)
+            .map_err(|error| format!("cannot open log file {}: {error}", path.display()))
+    }
+
+    fn write(&mut self, line: &str) -> std::io::Result<()> {
+        if self.failed {
+            return Ok(());
+        }
+        // Rotate before writing so the line being written is always in the
+        // current file and the previous generation is complete.
+        if self.size > 0 && self.size + line.len() as u64 + 1 > self.limit {
+            if let Err(error) = self.rotate() {
+                return Err(std::io::Error::other(error));
+            }
+        }
+        self.file.write_all(line.as_bytes())?;
+        self.file.write_all(b"\n")?;
+        self.file.flush()?;
+        self.size += line.len() as u64 + 1;
+        Ok(())
+    }
+
+    /// Renames the current file to `<path>.1`, dropping an older generation.
+    fn rotate(&mut self) -> Result<(), String> {
+        let rotated = rotated_path(&self.path);
+        // Best effort: a locked old generation must not stop logging,
+        // because the rename below would fail for the same reason.
+        let _ = std::fs::remove_file(&rotated);
+        if self.size > 0 {
+            std::fs::rename(&self.path, &rotated)
+                .map_err(|error| format!("cannot rotate {}: {error}", self.path.display()))?;
+        }
+        self.file = Self::append(&self.path, true)?;
+        self.size = 0;
+        Ok(())
+    }
+}
+
+fn rotated_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "netstudio-headless.log".to_string());
+    path.with_file_name(format!("{name}.1"))
+}
+
+fn text_line(level: Level, message: &str, paint: bool) -> String {
     let style = super::term::stderr_style();
     let label = level.label();
-    let painted = match level {
-        Level::Error => style.red(label),
-        Level::Warn => style.yellow(label),
-        Level::Info => style.cyan(label),
-        Level::Debug => style.dim(label),
+    let padded = format!("{label}{}", " ".repeat(5usize.saturating_sub(label.len())));
+    let (stamp, label) = if paint {
+        let painted = match level {
+            Level::Error => style.red(&padded),
+            Level::Warn => style.yellow(&padded),
+            Level::Info => style.cyan(&padded),
+            Level::Debug => style.dim(&padded),
+        };
+        (style.dim(&rfc3339_now()), painted)
+    } else {
+        (rfc3339_now(), padded)
     };
-    format!(
-        "{} {}{} {}",
-        style.dim(&rfc3339_now()),
-        painted,
-        " ".repeat(5usize.saturating_sub(label.len())),
-        message
-    )
+    format!("{stamp} {label} {message}")
 }
 
 /// Fixed key order (time, level, msg) so collectors need no schema registry.
@@ -220,6 +340,49 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_log_file_is_appended_and_rotated_once() {
+        let dir = std::env::temp_dir().join(format!("ns-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("headless.log");
+
+        let mut sink = Sink::open(&path).expect("open");
+        // Shrink the limit so the test does not write 8 MiB.
+        sink.limit = 40;
+        sink.write("first line").expect("write");
+        sink.write("second line").expect("write");
+        sink.write("third line").expect("write");
+        sink.write("fourth line").expect("write");
+
+        let rotated = rotated_path(&path);
+        assert!(rotated.is_file(), "rotation did not happen");
+        let old = std::fs::read_to_string(&rotated).expect("rotated");
+        assert!(old.contains("first line"), "{old}");
+        let current = std::fs::read_to_string(&path).expect("current");
+        assert!(current.contains("fourth line"), "{current}");
+        assert!(current.len() <= sink.limit as usize, "{current}");
+
+        // Reopening appends instead of truncating what the service wrote.
+        drop(sink);
+        let mut reopened = Sink::open(&path).expect("reopen");
+        reopened.write("after restart").expect("write");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.contains("fourth line"), "{text}");
+        assert!(text.contains("after restart"), "{text}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_log_file_line_has_no_colour_escapes_and_keeps_alignment() {
+        let plain = text_line(Level::Warn, "disk full", false);
+        assert!(!plain.contains('\u{1b}'), "{plain}");
+        assert!(plain.starts_with("20"), "{plain}");
+        assert!(plain.contains("WARN  disk full"), "{plain}");
+        assert!(text_line(Level::Info, "ok", false).contains("INFO  ok"));
+    }
 
     #[test]
     fn rfc3339_formats_known_instants() {

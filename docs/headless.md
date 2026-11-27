@@ -246,6 +246,7 @@ netstudio-headless --config targets.json --interval 15 --probe-concurrency 32 --
 | `--color <WHEN>` | `auto` (default), `always`, `never`; `--no-color` is an alias for `never` |
 | `--log-level <LEVEL>` | `error`, `warn`, `info` (default), `debug` |
 | `--log-format <FMT>` | `text` (default) or `json` (one JSON object per line) |
+| `--log-file <PATH>` | Append every line to `PATH` too, rotated to `PATH.1` at 8 MiB |
 | `-h`, `--help` | Usage |
 | `-V`, `--version` | Version |
 
@@ -347,6 +348,13 @@ every scrape.
   and the old one is refused at once. A file that is missing, empty or invalid
   keeps the previous token in force and is logged as a warning, so a broken
   mount can never leave the endpoint unauthenticated.
+* `--log-file` appends the same lines to a file, which is what a Windows
+  service or a container with no console to attach to needs. The file never
+  contains ANSI colour, even when stderr is a terminal, and it is opened in
+  append mode: a restart adds to it instead of starting over. Past 8 MiB the
+  current file becomes `PATH.1` (one generation) and logging continues in a
+  fresh `PATH`; a write failure is reported once and the daemon keeps running
+  instead of dying over a log path.
 * Logs go to stderr as `TIMESTAMP LEVEL message`; stdout is reserved for
   snapshots. With `--log-format json` each line is
   `{"time":"…","level":"warn","msg":"…"}` and never contains ANSI colour, so

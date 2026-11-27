@@ -83,6 +83,10 @@ Same as
 .IR text " (default) or " json
 for one JSON object per stderr line.
 .TP
+.BI \-\-log\-file " " PATH
+Append every log line to PATH as well as stderr. Rotated to PATH.1 at 8 MiB
+and never truncated on restart; a Windows service has no stderr to read.
+.TP
 .BR \-h ", " \-\-help
 Print usage and exit.
 .TP

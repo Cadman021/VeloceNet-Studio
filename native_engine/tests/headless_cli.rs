@@ -508,6 +508,74 @@ fn check_fails_when_a_preflight_path_is_unusable() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(windows)]
+#[test]
+fn log_file_receives_every_line_in_plain_text() {
+    let dir = temp_dir();
+    let config = write_config(
+        &dir,
+        serde_json::json!({ "id": 1, "host": "127.0.0.1", "port": 9, "protocol": "TCP", "interval_ms": 200, "timeout_ms": 300 }),
+    );
+    let log_path = dir.join("headless.log");
+    let args = [
+        "--config".as_ref(),
+        config.as_os_str(),
+        "--once".as_ref(),
+        "--log-file".as_ref(),
+        log_path.as_os_str(),
+    ];
+    let output = run(&args);
+    // Port 9 is closed, so --once reports a down target with exit 3; the
+    // logs still have to reach the file.
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let first = fs::read_to_string(&log_path).expect("log file");
+    assert!(first.contains("finished in"), "{first}");
+    assert!(
+        !first.contains('\u{1b}'),
+        "log file must not contain ANSI escapes: {first}"
+    );
+
+    // A second run appends: rotation must never truncate on open.
+    let again = run(&args);
+    assert_eq!(again.status.code(), Some(3), "{again:?}");
+    let second = fs::read_to_string(&log_path).expect("log file");
+    assert_eq!(
+        second.matches("finished in").count(),
+        2,
+        "the file was truncated: {second}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_rejects_an_unwritable_log_directory() {
+    let dir = temp_dir();
+    let config = write_config(
+        &dir,
+        serde_json::json!({ "host": "127.0.0.1", "port": 80, "protocol": "TCP" }),
+    );
+    let missing = dir.join("no-such-dir").join("headless.log");
+    let output = run(&[
+        "--config".as_ref(),
+        config.as_os_str(),
+        "--check".as_ref(),
+        "--format=json".as_ref(),
+        "--log-file".as_ref(),
+        missing.as_os_str(),
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("check json");
+    let failed: Vec<&str> = report["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .filter(|check| check["ok"] == false)
+        .map(|check| check["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(failed, ["log-file"]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn check_fails_when_the_listen_address_is_taken() {
     let dir = temp_dir();

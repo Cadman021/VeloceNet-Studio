@@ -36,7 +36,8 @@ pub const HELP: &str = concat!(
     "Options:\n",
     "  -c, --config <PATH>     Target configuration file (required)\n",
     "      --check             Validate the configuration (and --output,\n",
-    "                          --pid-file, --listen when given), then exit\n",
+    "                          --pid-file, --log-file, --listen, auth when\n",
+    "                          given), then exit\n",
     "      --once              Probe every target once, print a snapshot, exit\n",
     "      --interval <SECS>   Snapshot interval in seconds (default: 5)\n",
     "      --probe-interval <SECS>\n",
@@ -59,6 +60,8 @@ pub const HELP: &str = concat!(
     "          --no-color      Same as --color never\n",
     "      --log-level <LEVEL> error, warn, info (default) or debug\n",
     "      --log-format <FMT>  text (default) or json (one object per line)\n",
+    "      --log-file <PATH>   Append every log line to PATH as well as stderr\n",
+    "                          (rotated to PATH.1 at 8 MiB)\n",
     "  -h, --help              Print this help and exit\n",
     "  -V, --version           Print the version and exit\n",
     "\n",
@@ -96,6 +99,8 @@ pub struct Cli {
     pub color: ColorMode,
     pub log_level: Level,
     pub log_format: log::Format,
+    /// Also append logs here; a Windows service has no stderr to read.
+    pub log_file: Option<PathBuf>,
 }
 
 impl Default for Cli {
@@ -119,6 +124,7 @@ impl Default for Cli {
             color: ColorMode::Auto,
             log_level: Level::Info,
             log_format: log::Format::Text,
+            log_file: None,
         }
     }
 }
@@ -241,6 +247,9 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                     format!("invalid --log-format value: {value} (use text or json)")
                 })?;
             }
+            "--log-file" => {
+                cli.log_file = Some(PathBuf::from(take_value(&flag, inline, args, &mut index)?));
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
         index += 1;
@@ -332,6 +341,7 @@ mod tests {
             "--format=text",
             "--color=always",
             "--log-level=debug",
+            "--log-file=svc.log",
         ]))
         .expect("parse");
         assert_eq!(cli.interval_secs, 15);
@@ -341,6 +351,10 @@ mod tests {
         assert_eq!(cli.format, OutputFormat::Text);
         assert_eq!(cli.color, ColorMode::Always);
         assert_eq!(cli.log_level, Level::Debug);
+        assert_eq!(
+            cli.log_file.as_deref(),
+            Some(std::path::Path::new("svc.log"))
+        );
     }
 
     #[test]

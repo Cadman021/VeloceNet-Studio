@@ -278,6 +278,17 @@ fn run(cli: cli::Cli) -> i32 {
     term::init(cli.color);
     log::set_level(cli.log_level);
     log::set_format(cli.log_format);
+    // Before anything else so startup errors land in the file too: a service
+    // has no console to read them from. --check reports the path instead of
+    // opening it, so a bad one still produces the usual report.
+    if let Some(path) = &cli.log_file {
+        if !cli.check {
+            if let Err(error) = log::open_file(path) {
+                log::error(error);
+                return EXIT_CONFIG;
+            }
+        }
+    }
     if cli.help {
         print!("{}", cli::HELP);
         return EXIT_OK;
@@ -391,6 +402,13 @@ fn run_check(cli: &cli::Cli, loaded: &config::LoadedConfig, config_path: &Path) 
         checks.push(check_item(
             "output",
             validate_output_path(path),
+            format!("{} is writable", path.display()),
+        ));
+    }
+    if let Some(path) = &cli.log_file {
+        checks.push(check_item(
+            "log-file",
+            validate_log_path(path),
             format!("{} is writable", path.display()),
         ));
     }
@@ -1038,6 +1056,19 @@ fn validate_output_path(path: &Path) -> Result<(), String> {
     }
     if path.is_dir() {
         return Err(format!("output path {} is a directory", path.display()));
+    }
+    probe_dir_writable(dir)
+}
+
+/// Appended to, never truncated, so a read-only directory is the only
+/// failure the preflight can catch without writing to the real file.
+fn validate_log_path(path: &Path) -> Result<(), String> {
+    let dir = parent_dir(path);
+    if !dir.is_dir() {
+        return Err(format!("log directory {} does not exist", dir.display()));
+    }
+    if path.is_dir() {
+        return Err(format!("log path {} is a directory", path.display()));
     }
     probe_dir_writable(dir)
 }
