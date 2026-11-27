@@ -180,19 +180,27 @@ jobs:
         run: docker build -f native_engine/Dockerfile -t netstudio-headless:ci .
       - name: Image contract
         run: |
-          docker run --rm netstudio-headless:ci --version
+          # Assert the output, not just the exit status: a stale stub binary also
+          # exits 0, silently, which is how a dead image passed this step before.
+          version=$(docker run --rm netstudio-headless:ci --version)
+          echo "$version"
+          echo "$version" | grep -qE '^netstudio-headless [0-9]+\.[0-9]+\.[0-9]+$'
           docker run --rm --entrypoint id netstudio-headless:ci -u | grep -qx 10001
           test "$(docker inspect -f '{{.Config.User}}' netstudio-headless:ci)" = netstudio
           docker inspect -f '{{json .Config.Healthcheck}}' netstudio-headless:ci \
             | grep -q -- --health-check
       - name: Preflight the example config
         run: |
-          docker run --rm \
+          report=$(docker run --rm \
             -v "$PWD/docs/examples/targets.json:/etc/netstudio/targets.json:ro" \
             netstudio-headless:ci --check \
               --config /etc/netstudio/targets.json \
               --listen 127.0.0.1:9101 \
-              --output /var/lib/netstudio/status.json
+              --output /var/lib/netstudio/status.json \
+              --format text)
+          echo "$report"
+          echo "$report" | grep -q 'config OK:'
+          echo "$report" | grep -q 'listen'
       - name: Serve health, readiness, metrics and the event feed
         run: |
           # Mount the directory, not the file: Docker turns a missing host path
@@ -207,7 +215,9 @@ jobs:
           chmod -R a+rX .smoke
           docker run --rm -v "$PWD/.smoke:/etc/netstudio:ro" netstudio-headless:ci \
             --check --config /etc/netstudio/targets.json \
-              --listen 0.0.0.0:9101 --output /var/lib/netstudio/status.json
+              --listen 0.0.0.0:9101 --output /var/lib/netstudio/status.json \
+              --format text \
+            | tee /dev/stderr | grep -q 'config OK:'
           docker run -d --name daemon -p 19101:9101 \
             -v "$PWD/.smoke:/etc/netstudio:ro" netstudio-headless:ci
           for attempt in $(seq 1 20); do
