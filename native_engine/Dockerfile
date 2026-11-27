@@ -18,7 +18,13 @@ RUN mkdir -p src/bin \
     && cargo build --release --bin netstudio-headless \
     && rm -rf src
 COPY native_engine/src ./src
-RUN cargo build --release --bin netstudio-headless
+# COPY keeps the checkout's mtimes, and the stub build above happened later,
+# so cargo would call these sources fresh, print "Finished" and ship the stub
+# binary -- which starts, does nothing and exits 0. Drop just this crate's
+# artifacts, then prove the binary answers before it leaves the build stage.
+RUN cargo clean -p netstudio_engine \
+    && cargo build --release --bin netstudio-headless \
+    && ./target/release/netstudio-headless --version | grep -q '^netstudio-headless '
 
 FROM debian:bookworm-slim
 
