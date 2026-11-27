@@ -9,6 +9,10 @@ The binary is small because it only links the engine crate. It uses the
 app's existing JSON target format, so no separate configuration language is
 needed.
 
+Moving an existing desktop setup here? [headless-migration.md](headless-migration.md)
+walks through the export, the parity check, alerting, history and rollback,
+and lists what has no headless equivalent.
+
 ## Build
 
 ```bash
@@ -648,7 +652,26 @@ message from `/api/v1/status` or the snapshot file.
 Note that the engine has no persistence: counters and the 40-sample RTT
 window reset when the process restarts. Uptime history and the 30-day alert
 log remain desktop-app features; the daemon keeps only the recent
-transitions, as the feed below shows.
+transitions, as the feed below shows. Prometheus retention is where history
+lives now, and the dashboard in the next section reads it.
+
+### Grafana dashboard
+
+`deploy/grafana/netstudio-headless.json` is a ready-to-import dashboard
+(uid `netstudio-headless`) for everything above: readiness, offline and
+degraded counts, per-target state history, RTT, jitter, loss, time since the
+last success, request rate, reload outcomes, TLS expiry and failure kinds.
+It asks for the Prometheus data source through a `datasource` variable, so
+the same file works in every environment.
+
+Import it from the Grafana UI (Dashboards -> New -> Import -> Upload JSON
+file); the dashboard asks for the Prometheus data source through a
+`datasource` variable instead of hard-coding one.
+
+`deploy/grafana/README.md` covers provisioning it from a ConfigMap, and
+`tool/headless-grafana-check.py` fails CI when a panel queries a metric the
+daemon does not emit or legends a label it does not carry — a renamed
+metric would otherwise just empty a panel.
 
 ### Alerting (push webhooks)
 
@@ -709,7 +732,9 @@ Desktop-only features are intentionally absent:
 * traceroute/MTR, bandwidth, Warp, port scan and DNS lookup;
 * desktop notifications and the app's built-in chat/webhook senders; headless pushes nothing by itself, so use the event feed and `deploy/alerting/` (see Alerting above);
 * 30-day uptime history and CSV/JSON export;
-* hot reload (`SIGHUP`) and TLS/authentication on the HTTP server.
+* TLS termination and user accounts on the HTTP server: authentication is a
+  single bearer token (`--http-token-file`), so put a reverse proxy in front
+  for TLS and multi-user access.
 
 For container deployments, mount the config read-only, publish only the
 loopback metrics port, and set a memory limit; history is bounded per target

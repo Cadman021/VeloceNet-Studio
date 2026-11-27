@@ -123,7 +123,7 @@ jobs:
           shellcheck -s sh deploy/linux/debian/postinst deploy/linux/debian/prerm deploy/linux/debian/postrm
       - name: Python helpers compile
         run: |
-          python3 -m py_compile tool/headless-sbom.py tool/headless-docs-check.py deploy/alerting/netstudio-alert-bridge.py
+          python3 -m py_compile tool/headless-sbom.py tool/headless-docs-check.py tool/headless-grafana-check.py deploy/alerting/netstudio-alert-bridge.py
 
       - name: SBOM generator
         run: |
@@ -141,7 +141,7 @@ jobs:
   # rendered them: a troff mistake or a flag that never reached the docs
   # only surfaced when a user ran `man netstudio-headless`.
   docs:
-    name: Man page + completions
+    name: Man page, completions, dashboard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -151,6 +151,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends groff man-db zsh
       - name: Flags match the CLI
         run: python3 tool/headless-docs-check.py
+      - name: Dashboard matches the metrics
+        run: python3 tool/headless-grafana-check.py
       - name: Render the man page
         run: |
           groff -man -Tutf8 -z docs/netstudio-headless.1 2> groff.txt
