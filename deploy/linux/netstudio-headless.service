@@ -1,0 +1,64 @@
+# Installed as /lib/systemd/system/netstudio-headless.service by the
+# netstudio-headless .deb and .rpm. The ExecStart line is the packaged
+# configuration: edit /etc/default/netstudio-headless for extra arguments
+# rather than this unit, which package upgrades replace.
+[Unit]
+Description=VeloceNet Studio headless probe daemon
+Documentation=man:netstudio-headless(1)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=netstudio
+Group=netstudio
+EnvironmentFile=-/etc/default/netstudio-headless
+ExecStart=/usr/bin/netstudio-headless \
+    --config /etc/netstudio/targets.json \
+    --listen 127.0.0.1:9101 \
+    --output /var/lib/netstudio/status.json \
+    --watch-config 60 \
+    $NETSTUDIO_ARGS
+# SIGHUP reloads the target file without dropping probe history.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+StateDirectory=netstudio
+StateDirectoryMode=0750
+UMask=0027
+
+# ICMP needs a raw socket. AmbientCapabilities hands it to netstudio without
+# making the process root, and CapabilityBoundingSet removes everything else
+# even if the binary asked for it. Drop both lines when the configuration has
+# no ICMP targets.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+# The daemon needs outbound sockets, its config directory and its state
+# directory: nothing else. ProtectSystem=strict leaves /etc read-only, and
+# StateDirectory is the only writable path.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

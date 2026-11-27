@@ -96,3 +96,39 @@ jobs:
         run: cargo clippy --release --all-targets -- -D warnings
       - name: Test
         run: cargo test --release
+
+  # The .deb/.rpm build runs only on tags, so a broken packaging script
+  # would not surface until the next release. This job validates the assets,
+  # the layout, the shell syntax and the SBOM generator on every push.
+  packaging:
+    name: Linux packaging assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install shellcheck
+        run: sudo apt-get update -y && sudo apt-get install -y shellcheck
+      - name: Layout and assets
+        run: bash deploy/linux/build-package.sh --check
+      - name: Shell syntax
+        run: |
+          bash -n deploy/linux/build-package.sh
+          for script in deploy/linux/debian/*; do
+            bash -n "$script"
+            sh -n "$script"
+          done
+      - name: Shellcheck
+        run: |
+          shellcheck deploy/linux/build-package.sh
+          shellcheck -s sh deploy/linux/debian/postinst deploy/linux/debian/prerm deploy/linux/debian/postrm
+      - name: SBOM generator
+        run: |
+          python3 tool/headless-sbom.py --output /tmp/netstudio-headless.cdx.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/netstudio-headless.cdx.json') as handle:
+              document = json.load(handle)
+          assert document['specVersion'] == '1.5'
+          assert document['components'], 'no components'
+          print(len(document['components']), 'components')
+          PY

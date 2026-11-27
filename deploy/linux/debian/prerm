@@ -1,0 +1,10 @@
+#!/bin/sh
+# Stop and disable only on real removal; upgrades keep the service running.
+set -e
+
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    systemctl stop netstudio-headless.service >/dev/null 2>&1 || true
+    systemctl disable netstudio-headless.service >/dev/null 2>&1 || true
+fi
+
+exit 0

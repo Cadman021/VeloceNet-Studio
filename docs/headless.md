@@ -87,6 +87,43 @@ readiness probe to an `exec` one that runs `--health-check` with
 `NETSTUDIO_HTTP_TOKEN` from a `Secret` — `deploy/kubernetes/README.md` shows
 the exact YAML.
 
+### Linux packages (deb and rpm)
+
+`deploy/linux/build-package.sh` turns the release binary into a `.deb` or an
+`.rpm`; both install the daemon as a systemd service under an unprivileged
+`netstudio` account:
+
+```bash
+sudo dpkg -i netstudio-headless_1.6.0_amd64.deb     # Debian, Ubuntu
+sudo rpm -i netstudio-headless-1.6.0-1.x86_64.rpm   # Fedora, RHEL, openSUSE
+systemctl status netstudio-headless
+journalctl -u netstudio-headless -f
+systemctl reload netstudio-headless                 # SIGHUP: re-read targets
+```
+
+The unit runs `--config /etc/netstudio/targets.json --listen 127.0.0.1:9101
+--output /var/lib/netstudio/status.json --watch-config 60`, adds
+`$NETSTUDIO_ARGS` from `/etc/default/netstudio-headless` (so extra flags
+survive upgrades), and is hardened with `ProtectSystem=strict`, `ProtectHome`,
+`PrivateTmp`, `NoNewPrivileges`, `MemoryDenyWriteExecute` and
+`SystemCallFilter=@system-service`. `CAP_NET_RAW` is the only ambient
+capability, for ICMP; remove it when no target needs a raw socket.
+
+`/etc/netstudio/targets.json` is a conffile: upgrades never overwrite it, and
+edit it together with `systemctl reload`. Publishing beyond loopback belongs
+in `/etc/default/netstudio-headless` — set `--listen` and a token file readable
+by `netstudio` there — not in the unit, which the package replaces. Purge with
+`apt purge netstudio-headless` or `rpm -e netstudio-headless`; both remove the
+account and `/var/lib/netstudio`.
+
+Package locally with `bash deploy/linux/build-package.sh --format deb --outdir
+dist` on Linux with `dpkg-deb`/`rpmbuild` installed, or `--check` to validate
+the assets without building. Build on the oldest distribution you support: the
+release job uses `debian:bullseye` (glibc 2.31) so one build runs on Debian
+11-13, Ubuntu 20.04+ and RHEL 9+. Each release also carries a CycloneDX SBOM
+from `tool/headless-sbom.py`, listing the crates linked into the binary with
+their `Cargo.lock` checksums.
+
 ### Man page and shell completions
 
 `docs/netstudio-headless.1` documents every flag and exit code;

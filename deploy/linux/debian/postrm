@@ -1,0 +1,16 @@
+#!/bin/sh
+# Purge removes the account and the state directory; remove keeps them, so a
+# reinstall can be configured before the first start.
+set -e
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+if [ "$1" = purge ]; then
+    deluser --system netstudio >/dev/null 2>&1 || true
+    delgroup --system netstudio >/dev/null 2>&1 || true
+    rm -rf /var/lib/netstudio
+fi
+
+exit 0

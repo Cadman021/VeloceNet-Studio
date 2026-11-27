@@ -1,0 +1,21 @@
+#!/bin/sh
+# Create the unprivileged account and, on a fresh install, start the unit.
+set -e
+
+if ! getent passwd netstudio >/dev/null; then
+    adduser --system --group --home /var/lib/netstudio --no-create-home \
+        --shell /usr/sbin/nologin --gecos "VeloceNet Studio headless daemon" netstudio >/dev/null
+fi
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable netstudio-headless.service >/dev/null 2>&1 || true
+    if [ "$1" = configure ]; then
+        # --no-block: dpkg must not wait for the service, and a config that
+        # cannot bind its port should surface in `systemctl status`, not as a
+        # failed package installation.
+        systemctl start --no-block netstudio-headless.service || true
+    fi
+fi
+
+exit 0
