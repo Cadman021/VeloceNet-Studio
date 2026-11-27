@@ -218,13 +218,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # procps and man-db are not in the minbase image, but `systemd-analyze
+      # verify` needs both to check the unit as installed: /bin/kill for
+      # ExecReload=/bin/kill -HUP $MAINPID and `man` for Documentation=man:...
+      # A real Debian/Ubuntu/RHEL system has them (Priority: important/standard).
       - name: Install packaging tools
         run: |
           printf 'deb http://archive.debian.org/debian bullseye main\ndeb http://archive.debian.org/debian-security bullseye-security main\n' > /etc/apt/sources.list
           rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
           apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update -y
           apt-get install -y --no-install-recommends \
-            build-essential ca-certificates curl git pkg-config python3 rpm systemd xz-utils
+            build-essential ca-certificates curl git man-db pkg-config procps python3 \
+            rpm systemd xz-utils
 
       - uses: dtolnay/rust-toolchain@stable
 
