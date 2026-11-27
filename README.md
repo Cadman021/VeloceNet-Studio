@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.6.0](https://img.shields.io/badge/release-v1.6.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)
+[![Release v2.0.0](https://img.shields.io/badge/release-v2.0.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -58,16 +58,18 @@ Live latency matrix (ICMP / TCP / HTTP(S) with TTFB), visual traceroute, bandwid
 - **Resilient engine** — if the Rust `.dll`/`.so` isn't built, the app automatically uses the Dart fallback prober so the UI stays usable.
 - **Headless daemon** — the same engine ships as a standalone `netstudio-headless` binary for servers: reads the app's JSON targets, streams color-coded tables on a terminal (NDJSON when piped), writes atomic status files, reports sanitized failure reasons and staleness, and serves `/healthz`, `/readyz`, `/metrics` (Prometheus) and `/api/v1/status` without Flutter. See [docs/headless.md](docs/headless.md).
 
-## Download (v1.6.0)
+## Download (v2.0.0)
 
 No build needed — pick your platform from the
-[v1.6.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0):
+[v2.0.0 release](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0):
 
 | Platform | File | Run |
 |---|---|---|
 | Windows x64 | `velocenet-studio-windows-x64.zip` | Extract, run the `.exe` (DLL bundled next to it) |
 | Linux x64 | `velocenet-studio-linux-x64.tar.gz` | Extract, run the `netstudio` binary (`.so` bundled next to it) |
 | macOS arm64 | `velocenet-studio-macos-arm64.zip` | Extract, right-click the `.app` → Open (unsigned build, one-time Gatekeeper approval) |
+
+Server builds ship from the same release page: `netstudio-headless-<os>-<arch>` archives, plus `.deb` and `.rpm` packages for Linux — see [docs/headless.md](docs/headless.md).
 
 Native ICMP probing runs on Windows (IP Helper) and on Linux/macOS via unprivileged ping sockets; where the OS refuses them (e.g. a restrictive `ping_group_range`), probes transparently fall back to TCP. See [CHANGELOG.md](CHANGELOG.md) for what's in this release.
 

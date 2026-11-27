@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.6.0](https://img.shields.io/badge/release-v1.6.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)
+[![Release v2.0.0](https://img.shields.io/badge/release-v2.0.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -58,16 +58,18 @@
 - **弹性引擎** — 如果 Rust 的 `.dll`/`.so` 尚未构建，程序会自动使用 Dart 备用探测器，保证界面始终可用。
 - **无头守护进程** — 同一引擎的独立 `netstudio-headless` 二进制，面向服务器：读取应用的 JSON 目标、在终端输出彩色表格（管道输出时使用 NDJSON）、原子写入状态文件、报告失败原因与采样过期状态，并提供 `/healthz`、`/readyz`、`/metrics` (Prometheus) 与 `/api/v1/status`，无需 Flutter。详见 [docs/headless.md](docs/headless.md)。
 
-## 下载 (v1.6.0)
+## 下载 (v2.0.0)
 
 无需构建 — 从
-[v1.6.0 发布页](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)选择你的平台：
+[v2.0.0 发布页](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0)选择你的平台：
 
 | 平台 | 文件 | 运行 |
 |---|---|---|
 | Windows x64 | `velocenet-studio-windows-x64.zip` | 解压并运行其中的 `.exe` (DLL 已随附在旁) |
 | Linux x64 | `velocenet-studio-linux-x64.tar.gz` | 解压并运行其中的 `netstudio` 二进制文件 (`.so` 已随附在旁) |
 | macOS arm64 | `velocenet-studio-macos-arm64.zip` | 解压，右键点击 `.app` → 打开 (未签名构建，需一次性 Gatekeeper 确认) |
+
+服务器版本在同一发布页：`netstudio-headless-<os>-<arch>` 归档，以及 Linux 的 `.deb`/`.rpm` 包 — 见 [docs/headless.md](docs/headless.md)。
 
 原生 ICMP 探测目前仅支持 Windows；在 Linux/macOS 上这些探测会自动回退到 TCP。本版本内容见 [CHANGELOG.md](CHANGELOG.md)。
 

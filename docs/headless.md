@@ -42,10 +42,10 @@ contains only the daemon and `ca-certificates` (~30 MB), and runs as the
 unprivileged `netstudio` user:
 
 ```bash
-docker build -f native_engine/Dockerfile -t netstudio-headless:1.6.0 .
+docker build -f native_engine/Dockerfile -t netstudio-headless:2.0.0 .
 docker run --rm -p 9101:9101 --cap-add NET_RAW \
   -v "$PWD/targets.json:/etc/netstudio/targets.json:ro" \
-  netstudio-headless:1.6.0
+  netstudio-headless:2.0.0
 ```
 
 `--cap-add NET_RAW` is what unprivileged ICMP needs inside a container;
@@ -58,7 +58,7 @@ or wget inside — against `http://127.0.0.1:9101/readyz`:
 
 ```bash
 docker run -d --name netstudio -p 9101:9101 --cap-add NET_RAW \
-  -v "$PWD/targets.json:/etc/netstudio/targets.json:ro" netstudio-headless:1.6.0
+  -v "$PWD/targets.json:/etc/netstudio/targets.json:ro" netstudio-headless:2.0.0
 docker inspect --format '{{.State.Health.Status}}' netstudio   # healthy
 ```
 
@@ -78,7 +78,7 @@ of the deployment.
 `Deployment` and a `Service`:
 
 ```bash
-docker build -f native_engine/Dockerfile -t netstudio-headless:1.6.0 .
+docker build -f native_engine/Dockerfile -t netstudio-headless:2.0.0 .
 kubectl apply -f deploy/kubernetes/
 kubectl port-forward svc/netstudio-headless 9101:9101
 ```
@@ -102,8 +102,8 @@ the exact YAML.
 `netstudio` account:
 
 ```bash
-sudo dpkg -i netstudio-headless_1.6.0_amd64.deb     # Debian, Ubuntu
-sudo rpm -i netstudio-headless-1.6.0-1.x86_64.rpm   # Fedora, RHEL, openSUSE
+sudo dpkg -i netstudio-headless_2.0.0_amd64.deb     # Debian, Ubuntu
+sudo rpm -i netstudio-headless-2.0.0-1.x86_64.rpm   # Fedora, RHEL, openSUSE
 systemctl status netstudio-headless
 journalctl -u netstudio-headless -f
 systemctl reload netstudio-headless                 # SIGHUP: re-read targets
@@ -420,7 +420,7 @@ ANSI escape codes. A terminal snapshot looks like:
 
 ```text
 ------------------------------------------------------------------------------------------
-NetStudio Headless v1.6.0  2026-01-01T00:00:00.000Z
+NetStudio Headless v2.0.0  2026-01-01T00:00:00.000Z
 STATUS    TARGET                PROBE                   RTT     JITTER     LOSS    OK/SENT
 ------------------------------------------------------------------------------------------
 ONLINE    Cloudflare DNS        ICMP 1.1.1.1:53     0.72 ms    0.00 ms     0.0%        1/1
@@ -439,7 +439,7 @@ and `--no-color` disable them. Use `--format json` for the machine form
   "type": "snapshot",
   "time": "2026-01-01T00:00:00.000Z",
   "epoch_ms": 1767225600000,
-  "version": "1.6.0",
+  "version": "2.0.0",
   "summary": {
     "targets": 2, "pending": 0, "online": 1, "degraded": 0,
     "offline": 1, "down": 1, "stale": 0, "muted": 0

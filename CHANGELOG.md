@@ -7,6 +7,17 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Nothing yet — see `main` for work toward the next release.
+
+## [2.0.0] — 2026-11-27
+
+Headless mode is the headline: the engine that has always shipped inside the desktop app
+now also runs as a standalone daemon for servers and containers, with its own HTTP
+surface, man page and completions, container image, `.deb`/`.rpm` packages and
+deployment tooling. Existing installs keep their settings, history and backups, so the
+major number marks a new distribution channel rather than a break in the desktop app.
+
+### Added
 - `docs/headless-migration.md` is the switch-over guide from the desktop app: what carries over unchanged (the app's own export, its alert thresholds, the `TargetStats` JSON), what has to be replaced (live table, tray notifications, 30-day history), a parity check with `--once`, exposing the HTTP surface behind a TLS proxy, the overlap-and-rollback procedure, and the surprises (`netstudio_target_up` absent before the first sample, `-1` sentinels, counter and event-cursor resets on restart, `CAP_NET_RAW` for hardened units).
 - `deploy/grafana/netstudio-headless.json` imports as a complete dashboard: readiness, offline/degraded/stale counts, per-target state history, RTT (avg/max), jitter, loss, time since the last success, request rate, reload outcomes, TLS expiry and failures by kind, with the Prometheus data source picked through a `datasource` variable. `deploy/grafana/README.md` covers importing and ConfigMap provisioning, and `tool/headless-grafana-check.py` (run in CI next to the man page check) rejects a panel that queries a metric the daemon does not emit or legends a label the series does not carry.
 - Headless docs are now checked, not just written: `tool/headless-docs-check.py` compares the flags in `cli.rs` with `docs/netstudio-headless.1` and both completions, rejects duplicated option blocks and a stale `.TH` version, and CI renders the man page with groff and syntax-checks the completions. The man page gained the missing `--listen` entry, an HTTP-endpoints section, and lost a duplicated `--windows-service` block.
@@ -211,7 +222,9 @@ First public release.
 - Native metrics polling interval 200 ms → 500 ms (less UI-thread JSON pressure); `print` → `debugPrint` in the engine service.
 - Rank medals (🥇🥈🥉) replaced with text ranks (`#1`, `#2`, …) for font/i18n safety.
 
-[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/Cadman021/VeloceNet-Studio/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0
+[1.6.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.3.0

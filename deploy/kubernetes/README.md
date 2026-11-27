@@ -5,7 +5,7 @@ the latest snapshot in an `emptyDir`, and everything else is derived from the
 probes it runs.
 
 ```bash
-docker build -f native_engine/Dockerfile -t netstudio-headless:1.6.0 .
+docker build -f native_engine/Dockerfile -t netstudio-headless:2.0.0 .
 kubectl apply -f deploy/kubernetes/configmap.yaml
 kubectl apply -f deploy/kubernetes/deployment.yaml
 kubectl apply -f deploy/kubernetes/service.yaml

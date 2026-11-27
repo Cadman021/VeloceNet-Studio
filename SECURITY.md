@@ -6,8 +6,8 @@ Only the latest minor release line receives security fixes:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.4.x   | :white_check_mark: |
-| < 1.4   | :x:                |
+| 2.0.x   | :white_check_mark: |
+| < 2.0   | :x:                |
 
 If you are stuck on an older release, the fix will land on `main` — please
 upgrade to the latest release to receive it.

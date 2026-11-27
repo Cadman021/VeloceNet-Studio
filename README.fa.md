@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.6.0](https://img.shields.io/badge/release-v1.6.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)
+[![Release v2.0.0](https://img.shields.io/badge/release-v2.0.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -58,16 +58,18 @@
 - **انجین تاب‌آور** — اگر `.dll`/`.so` راست بیلد نشده باشد، برنامه خودکار با پروبر پشتیبان Dart کار می‌کند تا رابط کاربری همیشه قابل استفاده بماند.
 - **دیمن headless** — همان انجین به‌صورت باینری مستقل `netstudio-headless` برای سرورها: خواندن تارگت‌های JSON اپ، جدول رنگی روی ترمینال (و NDJSON وقتی خروجی pipe شود)، فایل وضعیت اتمیک، گزارش دلیل خطا و کهنگی نمونه، و سرویس `/healthz`، `/readyz`، `/metrics` (Prometheus) و `/api/v1/status` بدون Flutter. راهنما: [docs/headless.md](docs/headless.md).
 
-## دانلود (v1.6.0)
+## دانلود (v2.0.0)
 
 بدون نیاز به بیلد — پلتفرم خود را از
-[ریلیز v1.6.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0) بگیرید:
+[ریلیز v2.0.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0) بگیرید:
 
 | پلتفرم | فایل | اجرا |
 |---|---|---|
 | Windows x64 | `velocenet-studio-windows-x64.zip` | اکسترکت کنید و `.exe` را اجرا کنید (DLL کنارش باندل شده) |
 | Linux x64 | `velocenet-studio-linux-x64.tar.gz` | اکسترکت کنید و باینری `netstudio` را اجرا کنید (`.so` کنارش باندل شده) |
 | macOS arm64 | `velocenet-studio-macos-arm64.zip` | اکسترکت کنید، روی `.app` راست‌کلیک → Open (بیلد امضانشده، یک بار تأیید Gatekeeper) |
+
+نسخه‌های سروری در همان صفحه‌ی ریلیز هستند: آرشیوهای `netstudio-headless-<os>-<arch>` و بسته‌های `.deb` و `.rpm` برای لینوکس — [docs/headless.md](docs/headless.md).
 
 پروب بومی ICMP روی ویندوز (IP Helper) و روی لینوکس/مک (سوکت ping بدون root) اجرا می‌شود؛ فقط جایی که سیستم‌عامل آن را رد کند، شفاف به TCP برمی‌گردد. برای جزئیات این نسخه [CHANGELOG.md](CHANGELOG.md) را ببینید.
 

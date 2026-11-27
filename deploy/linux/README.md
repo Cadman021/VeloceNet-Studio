@@ -42,8 +42,8 @@ Both packages install the same architecture: `--arch amd64` (default) or
 ## Install, upgrade, remove
 
 ```bash
-sudo dpkg -i dist/netstudio-headless_1.6.0_amd64.deb
-sudo rpm -i dist/netstudio-headless-1.6.0-1.x86_64.rpm
+sudo dpkg -i dist/netstudio-headless_2.0.0_amd64.deb
+sudo rpm -i dist/netstudio-headless-2.0.0-1.x86_64.rpm
 
 sudo apt install -f          # resolve a missing libc6/adduser: dpkg does not
 
@@ -103,7 +103,7 @@ parses the unit without starting it; `netstudio-headless --check --config
 end up in the binary, with the checksums `Cargo.lock` already pins:
 
 ```bash
-python3 tool/headless-sbom.py --output dist/netstudio-headless-1.6.0.cdx.json
+python3 tool/headless-sbom.py --output dist/netstudio-headless-2.0.0.cdx.json
 ```
 
 It needs only `cargo metadata` (no build, no network beyond the registry

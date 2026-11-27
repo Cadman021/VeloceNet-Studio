@@ -3,7 +3,7 @@
 # match: pubspec â†” app_info.dart â†” Cargo.toml).
 [package]
 name = "netstudio_engine"
-version = "1.6.0"
+version = "2.0.0"
 edition = "2021"
 authors = ["VeloceNet-Studio Contributors"]
 repository = "https://github.com/Cadman021/VeloceNet-Studio"

@@ -114,7 +114,7 @@ def check_version(man_text):
     if not cargo:
         fail('cannot read the version from native_engine/Cargo.toml')
         return
-    # .TH NETSTUDIO-HEADLESS 1 "2026" "netstudio-headless 1.6.0" "User Commands"
+    # .TH NETSTUDIO-HEADLESS 1 "2026" "netstudio-headless 2.0.0" "User Commands"
     header = re.search(r'"netstudio-headless ([^"]+)"', man_text)
     if not header:
         fail('the .TH line does not carry "netstudio-headless <version>"')

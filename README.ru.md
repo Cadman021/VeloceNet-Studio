@@ -1,7 +1,7 @@
 # VeloceNet-Studio
 
 [![CI](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml/badge.svg)](https://github.com/Cadman021/VeloceNet-Studio/actions/workflows/ci.yml)
-[![Release v1.6.0](https://img.shields.io/badge/release-v1.6.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0)
+[![Release v2.0.0](https://img.shields.io/badge/release-v2.0.0-green.svg)](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Flutter](https://img.shields.io/badge/Flutter-%E2%89%A53.22-02569B.svg)]()
@@ -58,16 +58,18 @@
 - **Живучий движок** — если `.dll`/`.so` Rust не собран, приложение автоматически работает на резервном пробере Dart, так что UI доступен всегда.
 - **Headless-демон** — тот же движок отдельным бинарником `netstudio-headless` для серверов: читает JSON-цели приложения, выводит цветную таблицу в терминале (NDJSON при перенаправлении), атомарно пишет файл статуса, сообщает причину сбоя и устаревание выборки и отдаёт `/healthz`, `/readyz`, `/metrics` (Prometheus) и `/api/v1/status` без Flutter. См. [docs/headless.md](docs/headless.md).
 
-## Скачать (v1.6.0)
+## Скачать (v2.0.0)
 
 Собирать ничего не нужно — выберите платформу в
-[релизе v1.6.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v1.6.0):
+[релизе v2.0.0](https://github.com/Cadman021/VeloceNet-Studio/releases/tag/v2.0.0):
 
 | Платформа | Файл | Запуск |
 |---|---|---|
 | Windows x64 | `velocenet-studio-windows-x64.zip` | Распакуйте и запустите `.exe` (DLL рядом в архиве) |
 | Linux x64 | `velocenet-studio-linux-x64.tar.gz` | Распакуйте и запустите бинарь `netstudio` (`.so` рядом в архиве) |
 | macOS arm64 | `velocenet-studio-macos-arm64.zip` | Распакуйте, правый клик по `.app` → Открыть (сборка без подписи, разовое подтверждение Gatekeeper) |
+
+Серверные сборки — на той же странице релиза: архивы `netstudio-headless-<os>-<arch>` и пакеты `.deb`/`.rpm` для Linux — см. [docs/headless.md](docs/headless.md).
 
 Нативный ICMP-проби‌нг пока только под Windows; на Linux/macOS эти пробы прозрачно уходят в TCP. Что нового — см. [CHANGELOG.md](CHANGELOG.md).
 

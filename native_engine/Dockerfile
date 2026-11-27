@@ -1,7 +1,7 @@
 # Standalone headless daemon image (no Flutter, no display).
-# Build:  docker build -f native_engine/Dockerfile -t netstudio-headless:1.6.0 .
+# Build:  docker build -f native_engine/Dockerfile -t netstudio-headless:2.0.0 .
 # Run:    docker run --rm -p 9101:9101 --cap-add NET_RAW \
-#           -v $PWD/targets.json:/etc/netstudio/targets.json:ro netstudio-headless:1.6.0
+#           -v $PWD/targets.json:/etc/netstudio/targets.json:ro netstudio-headless:2.0.0
 #
 # ICMP probes need a raw socket: --cap-add NET_RAW (or NET_ADMIN on some
 # kernels). Without it ICMP targets fall back to TCP or report a permission
