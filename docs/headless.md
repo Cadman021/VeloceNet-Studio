@@ -412,7 +412,12 @@ get `413`, malformed or incomplete ones get `400`, and a request that is not
 finished within 3 seconds gets `408`. Connections are served by a fixed pool
 of 8 workers with a 16-connection queue; excess connections get `503` instead
 of creating threads, and every worker is joined during shutdown. Each
-connection is closed after one response.
+connection is closed after one response, every response is
+`Cache-Control: no-store`, and `/readyz` answers `503` with `Retry-After: 1`
+while the first sample is still missing. Bodies embed the current time, sample
+age and uptime, so `If-None-Match`/`If-Modified-Since` would never match; poll
+at the snapshot cadence instead. The server does not compress: put a
+gzip-capable proxy in front if `/metrics` payloads matter at scale.
 
 ### Prometheus metrics
 

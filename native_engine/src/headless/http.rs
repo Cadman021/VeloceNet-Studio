@@ -29,6 +29,8 @@ struct Response {
     allow: Option<&'static str>,
     /// Sent on 401 so a client knows which scheme to use.
     challenge: Option<&'static str>,
+    /// Sent on 503 so a client knows when to try again.
+    retry_after: Option<&'static str>,
 }
 
 impl Response {
@@ -40,6 +42,7 @@ impl Response {
             body: body.into_bytes(),
             allow: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -51,6 +54,7 @@ impl Response {
             body: body.into_bytes(),
             allow: None,
             challenge: None,
+            retry_after: None,
         }
     }
 }
@@ -423,7 +427,10 @@ fn route(path: &str, state: &State) -> Response {
             if state.ready() {
                 Response::text(200, "OK", "ready\n".to_string())
             } else {
-                Response::text(503, "Service Unavailable", "starting\n".to_string())
+                Response {
+                    retry_after: Some("1"),
+                    ..Response::text(503, "Service Unavailable", "starting\n".to_string())
+                }
             }
         }
         "/metrics" => {
@@ -447,13 +454,18 @@ fn route(path: &str, state: &State) -> Response {
 
 fn write_response(stream: &mut TcpStream, response: &Response, head_only: bool) {
     let mut header = format!(
-        "HTTP/1.1 {} {}\r\nDate: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n",
+        "HTTP/1.1 {} {}\r\nDate: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n",
         response.status,
         response.reason,
         log::http_date(log::now_epoch_ms()),
         response.content_type,
         response.body.len()
     );
+    if let Some(retry_after) = response.retry_after {
+        header.push_str("Retry-After: ");
+        header.push_str(retry_after);
+        header.push_str("\r\n");
+    }
     if let Some(allow) = response.allow {
         header.push_str("Allow: ");
         header.push_str(allow);
@@ -464,7 +476,7 @@ fn write_response(stream: &mut TcpStream, response: &Response, head_only: bool) 
         header.push_str(challenge);
         header.push_str("\r\n");
     }
-    header.push_str("\r\n");
+    header.push_str("Connection: close\r\n\r\n");
     let _ = stream.write_all(header.as_bytes());
     if !head_only {
         let _ = stream.write_all(&response.body);
@@ -571,6 +583,19 @@ mod tests {
         // Liveness probes cannot send headers, readiness must be guarded.
         assert!(request(&server, "GET", "/healthz").starts_with("HTTP/1.1 200"));
         assert!(request(&server, "GET", "/readyz").starts_with("HTTP/1.1 401"));
+    }
+
+    #[test]
+    fn readiness_tells_the_client_when_to_retry() {
+        let starting = start(State::new(1));
+        let not_ready = request(&starting, "GET", "/readyz");
+        assert!(not_ready.starts_with("HTTP/1.1 503"), "{not_ready}");
+        assert_eq!(header(&not_ready, "retry-after"), Some("1"));
+
+        let ready = start(state_with_sample());
+        let response = request(&ready, "GET", "/readyz");
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert_eq!(header(&response, "retry-after"), None);
     }
 
     #[test]
