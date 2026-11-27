@@ -23,6 +23,29 @@ void main() {
       expect(result.targets[1].host, '8.8.8.8');
     });
 
+    test('carries the alert thresholds as settings', () {
+      final json = exportTargetsJson(
+        [_target()],
+        offlineAfter: 5,
+        recoverAfter: 4,
+      );
+      final decoded = jsonDecode(json) as Map<String, dynamic>;
+      expect(decoded['settings'], {'offline_after': 5, 'recover_after': 4});
+      // Still a valid target backup for the importer.
+      expect(importTargetsJson(json).targets, hasLength(1));
+    });
+
+    test('omits settings when the thresholds are unknown', () {
+      final decoded =
+          jsonDecode(exportTargetsJson([_target()])) as Map<String, dynamic>;
+      expect(decoded.containsKey('settings'), isFalse);
+      // The persisted copy must not grow a settings block either.
+      final partial = jsonDecode(
+        exportTargetsJson([_target()], offlineAfter: 3),
+      ) as Map<String, dynamic>;
+      expect(partial['settings'], {'offline_after': 3});
+    });
+
     test('accepts a bare array too', () {
       final result = importTargetsJson('[{"host": "1.1.1.1"}]');
       expect(result.targets, hasLength(1));

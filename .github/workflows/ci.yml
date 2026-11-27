@@ -73,7 +73,7 @@ jobs:
       - name: Test
         run: cargo test --release
       - name: Clippy
-        run: cargo clippy --release -- -D warnings
+        run: cargo clippy --release --all-targets -- -D warnings
       - name: Format check
         run: cargo fmt --check
 
@@ -93,6 +93,152 @@ jobs:
         with:
           components: clippy
       - name: Clippy (deny warnings)
-        run: cargo clippy --release -- -D warnings
+        run: cargo clippy --release --all-targets -- -D warnings
       - name: Test
         run: cargo test --release
+
+  # The .deb/.rpm build runs only on tags, so a broken packaging script
+  # would not surface until the next release. This job validates the assets,
+  # the layout, the shell syntax and the SBOM generator on every push.
+  packaging:
+    name: Linux packaging assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install shellcheck
+        run: sudo apt-get update -y && sudo apt-get install -y shellcheck
+      - name: Layout and assets
+        run: bash deploy/linux/build-package.sh --check
+      - name: Shell syntax
+        run: |
+          bash -n deploy/linux/build-package.sh
+          for script in deploy/linux/debian/*; do
+            bash -n "$script"
+            sh -n "$script"
+          done
+      - name: Shellcheck
+        run: |
+          shellcheck deploy/linux/build-package.sh
+          shellcheck -s sh deploy/linux/debian/postinst deploy/linux/debian/prerm deploy/linux/debian/postrm
+      - name: Python helpers compile
+        run: |
+          python3 -m py_compile tool/headless-sbom.py tool/headless-docs-check.py tool/headless-grafana-check.py deploy/alerting/netstudio-alert-bridge.py
+
+      - name: SBOM generator
+        run: |
+          python3 tool/headless-sbom.py --output /tmp/netstudio-headless.cdx.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/netstudio-headless.cdx.json') as handle:
+              document = json.load(handle)
+          assert document['specVersion'] == '1.5'
+          assert document['components'], 'no components'
+          print(len(document['components']), 'components')
+          PY
+
+  # The packages install the man page and the completions, but nothing
+  # rendered them: a troff mistake or a flag that never reached the docs
+  # only surfaced when a user ran `man netstudio-headless`.
+  docs:
+    name: Man page, completions, dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install a renderer
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends groff man-db zsh
+      - name: Flags match the CLI
+        run: python3 tool/headless-docs-check.py
+      - name: Dashboard matches the metrics
+        run: python3 tool/headless-grafana-check.py
+      - name: Render the man page
+        run: |
+          groff -man -Tutf8 -z docs/netstudio-headless.1 2> groff.txt
+          if grep -Eai 'warning:|error:' groff.txt; then exit 1; fi
+          MANWIDTH=80 MANPAGER=cat PAGER=cat \
+            man --warnings -l docs/netstudio-headless.1 > rendered.txt 2> man.txt
+          if grep -Eai 'warning:|error:' man.txt; then exit 1; fi
+          grep -q 'NETSTUDIO-HEADLESS(1)' rendered.txt
+          grep -q '/api/v1/events' rendered.txt
+          sed -n '1,12p' rendered.txt
+      - name: Completion syntax
+        run: |
+          bash -n docs/completions/netstudio-headless.bash
+          zsh -n docs/completions/netstudio-headless.zsh
+
+  # The image is built from native_engine/Dockerfile, but no job built it, so
+  # a broken COPY or a daemon that cannot run unprivileged would only show up
+  # when someone tried to deploy it.
+  container:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build
+        run: docker build -f native_engine/Dockerfile -t netstudio-headless:ci .
+      - name: Image contract
+        run: |
+          # Assert the output, not just the exit status: a stale stub binary also
+          # exits 0, silently, which is how a dead image passed this step before.
+          version=$(docker run --rm netstudio-headless:ci --version)
+          echo "$version"
+          echo "$version" | grep -qE '^netstudio-headless [0-9]+\.[0-9]+\.[0-9]+$'
+          docker run --rm --entrypoint id netstudio-headless:ci -u | grep -qx 10001
+          test "$(docker inspect -f '{{.Config.User}}' netstudio-headless:ci)" = netstudio
+          docker inspect -f '{{json .Config.Healthcheck}}' netstudio-headless:ci \
+            | grep -q -- --health-check
+      - name: Preflight the example config
+        run: |
+          report=$(docker run --rm \
+            -v "$PWD/docs/examples/targets.json:/etc/netstudio/targets.json:ro" \
+            netstudio-headless:ci --check \
+              --config /etc/netstudio/targets.json \
+              --listen 127.0.0.1:9101 \
+              --output /var/lib/netstudio/status.json \
+              --format text)
+          echo "$report"
+          echo "$report" | grep -q 'config OK:'
+          echo "$report" | grep -q 'listen'
+      - name: Serve health, readiness, metrics and the event feed
+        run: |
+          # Mount the directory, not the file: Docker turns a missing host path
+          # into an empty directory, and the daemon would then see a directory
+          # where it expects the config.
+          mkdir -p .smoke
+          cat > .smoke/targets.json <<'JSON'
+          {"settings":{"offline_after":1,"recover_after":1},
+           "targets":[{"id":1,"name":"self","host":"127.0.0.1","port":9101,
+                       "protocol":"TCP","interval_ms":500,"timeout_ms":500}]}
+          JSON
+          chmod -R a+rX .smoke
+          docker run --rm -v "$PWD/.smoke:/etc/netstudio:ro" netstudio-headless:ci \
+            --check --config /etc/netstudio/targets.json \
+              --listen 0.0.0.0:9101 --output /var/lib/netstudio/status.json \
+              --format text \
+            | tee /dev/stderr | grep -q 'config OK:'
+          docker run -d --name daemon -p 19101:9101 \
+            -v "$PWD/.smoke:/etc/netstudio:ro" netstudio-headless:ci
+          for attempt in $(seq 1 20); do
+            status=$(docker inspect -f '{{.State.Status}}' daemon)
+            if [ "$status" = "exited" ] || [ "$status" = "dead" ]; then
+              echo "the daemon did not stay up: $status"
+              docker inspect -f 'exit={{.State.ExitCode}} mounts={{json .Mounts}}' daemon
+              docker logs daemon || true
+              exit 1
+            fi
+            if curl -fsS -o /dev/null http://127.0.0.1:19101/healthz; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:19101/healthz
+          timeout 30 sh -c 'until curl -fsS -o /dev/null http://127.0.0.1:19101/readyz; do sleep 1; done'
+          curl -fsS http://127.0.0.1:19101/metrics | grep -q '^netstudio_targets_configured 1'
+          curl -fsS http://127.0.0.1:19101/metrics | grep -q '^netstudio_target_up{'
+          curl -fsS 'http://127.0.0.1:19101/api/v1/events' | grep -q '"schema":1'
+          curl -fsS -o /dev/null http://127.0.0.1:19101/api/v1/status
+          docker exec daemon test -s /var/lib/netstudio/status.json
+          docker run --rm --network container:daemon netstudio-headless:ci \
+            --health-check http://127.0.0.1:9101/readyz
+          docker logs daemon | tail -n 4
+          docker stop daemon

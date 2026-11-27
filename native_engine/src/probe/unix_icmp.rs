@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 use super::tcp::ProbeResult;
+use crate::stats::ProbeErrorKind;
 
 /// Marker prefix in `ProbeResult::error` when the OS refused ping sockets.
 /// `execute_probe` keys its TCP fallback off this instead of "any failure".
@@ -205,7 +206,7 @@ fn resolve_ipv4(host: &str) -> Result<Ipv4Addr, String> {
 pub fn ping_icmp_sync(host: &str, timeout_ms: u32) -> ProbeResult {
     let dest = match resolve_ipv4(host) {
         Ok(v4) => v4,
-        Err(msg) => return ProbeResult::failure(msg),
+        Err(msg) => return ProbeResult::failure_kind(ProbeErrorKind::Dns, msg),
     };
 
     let mut sock = match IcmpSocket::open() {
@@ -215,19 +216,30 @@ pub fn ping_icmp_sync(host: &str, timeout_ms: u32) -> ProbeResult {
 
     let seq = match sock.send_echo(dest, DEFAULT_TTL) {
         Ok(s) => s,
-        Err(e) => return ProbeResult::failure(format!("ICMP send failed: {}", e)),
+        Err(e) => {
+            return ProbeResult::failure_kind(
+                ProbeErrorKind::Other,
+                format!("ICMP send failed: {}", e),
+            )
+        }
     };
 
     let timeout = Duration::from_millis(timeout_ms.clamp(1, 60_000) as u64);
     match sock.wait_reply(dest, seq, timeout) {
         WaitOutcome::Reply(reply) => match reply.kind {
             ReplyKind::EchoReply => ProbeResult::success(reply.rtt_ms),
-            ReplyKind::TimeExceeded => ProbeResult::failure("TTL expired before destination"),
-            ReplyKind::Unreachable => {
-                ProbeResult::failure(format!("Destination unreachable (via {})", reply.from))
-            }
+            ReplyKind::TimeExceeded => ProbeResult::failure_kind(
+                ProbeErrorKind::Unreachable,
+                "TTL expired before destination",
+            ),
+            ReplyKind::Unreachable => ProbeResult::failure_kind(
+                ProbeErrorKind::Unreachable,
+                format!("Destination unreachable (via {})", reply.from),
+            ),
         },
-        WaitOutcome::Timeout => ProbeResult::failure("ICMP request timed out"),
+        WaitOutcome::Timeout => {
+            ProbeResult::failure_kind(ProbeErrorKind::Timeout, "ICMP request timed out")
+        }
     }
 }
 

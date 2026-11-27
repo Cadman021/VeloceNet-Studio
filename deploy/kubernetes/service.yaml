@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: netstudio-headless
+  labels:
+    app.kubernetes.io/name: netstudio-headless
+spec:
+  # Probe traffic is local to the pod; the Service exists for scraping and
+  # for a human to curl /api/v1/status with kubectl port-forward.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: netstudio-headless
+  ports:
+    - name: http
+      port: 9101
+      targetPort: http

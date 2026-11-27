@@ -56,6 +56,7 @@ Live latency matrix (ICMP / TCP / HTTP(S) with TTFB), visual traceroute, bandwid
 - **System tray** — close minimizes to the tray while monitoring continues; Show/Hide/Quit menu, toggleable in Settings.
 - **Update checker** — daily GitHub Releases poll with a startup prompt dialog (Download/Later, once per version) and manual check in Settings.
 - **Resilient engine** — if the Rust `.dll`/`.so` isn't built, the app automatically uses the Dart fallback prober so the UI stays usable.
+- **Headless daemon** — the same engine ships as a standalone `netstudio-headless` binary for servers: reads the app's JSON targets, streams color-coded tables on a terminal (NDJSON when piped), writes atomic status files, reports sanitized failure reasons and staleness, and serves `/healthz`, `/readyz`, `/metrics` (Prometheus) and `/api/v1/status` without Flutter. See [docs/headless.md](docs/headless.md).
 
 ## Download (v1.6.0)
 
@@ -91,6 +92,8 @@ flutter run -d windows
 ```
 
 Linux/macOS: `cargo build --release` produces `libnetstudio_engine.so` / `.dylib`; ICMP uses unprivileged ping sockets (SOCK_DGRAM) and falls back to TCP only where the OS refuses them.
+
+The same build produces `native_engine/target/release/netstudio-headless` (`netstudio-headless.exe` on Windows), the standalone daemon. `build_native.ps1` copies it next to the app and the Windows runner output. See [docs/headless.md](docs/headless.md) for configuration, HTTP endpoints and a systemd unit.
 
 ## How it works
 
@@ -151,4 +154,4 @@ New UI strings must go through the JSON dictionaries in `assets/lang/` (all four
 
 ## Changelog & roadmap
 
-See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Prometheus export endpoint, real per-process accounting (ETW), headless/CLI daemon, Linux/macOS secret-store backends (libsecret/Keychain), additional network tools (speed test, DNS benchmark, TLS inspector).
+See [CHANGELOG.md](CHANGELOG.md). Near-term ideas: Prometheus export endpoint, real per-process accounting (ETW), Linux/macOS secret-store backends (libsecret/Keychain), additional network tools (speed test, DNS benchmark, TLS inspector).

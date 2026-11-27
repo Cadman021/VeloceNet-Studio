@@ -1,0 +1,27 @@
+{
+  "app": "velocenet-studio",
+  "version": 1,
+  "settings": { "offline_after": 3, "recover_after": 2 },
+  "targets": [
+    {
+      "id": 1,
+      "name": "Cloudflare DNS",
+      "host": "1.1.1.1",
+      "port": 53,
+      "protocol": "ICMP",
+      "group": "Public DNS",
+      "interval_ms": 1000,
+      "timeout_ms": 1000
+    },
+    {
+      "id": 2,
+      "name": "Cloudflare DNS (TCP)",
+      "host": "1.1.1.1",
+      "port": 53,
+      "protocol": "TCP",
+      "group": "Public DNS",
+      "interval_ms": 2000,
+      "timeout_ms": 2000
+    }
+  ]
+}

@@ -39,6 +39,8 @@ migrate_working_dir/
 *.so
 *.dylib
 /netstudio_engine.dll
+/netstudio-headless
+/netstudio-headless.exe
 /native_engine/target/
 native_engine/target/
 build/windows/
@@ -49,6 +51,11 @@ build/linux/
 
 # Symbolication related
 app.*.symbols
+
+# Headless CLI local runs
+/targets.json
+/status.json
+/headless.pid
 
 # Obfuscation related
 app.*.map.json

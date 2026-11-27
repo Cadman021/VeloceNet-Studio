@@ -1,0 +1,18 @@
+# Extra arguments appended to the packaged ExecStart line.
+#
+# systemd splits this value on whitespace; there is no shell quoting, so a
+# path containing spaces cannot be expressed here.
+#
+# Publish on the LAN instead of loopback (put a proxy or a token in front):
+#   NETSTUDIO_ARGS=--listen 0.0.0.0:9101
+#
+# Require a bearer token (the file must be readable by the netstudio user):
+#   install -d -o root -g netstudio -m 0750 /etc/netstudio
+#   install -o root -g netstudio -m 0640 /dev/null /etc/netstudio/token
+#   printf '%s\n' "$TOKEN" > /etc/netstudio/token
+#   NETSTUDIO_ARGS=--http-token-file /etc/netstudio/token
+#
+# Keep a copy of the log outside the journal:
+#   NETSTUDIO_ARGS=--log-file /var/lib/netstudio/netstudio.log
+
+NETSTUDIO_ARGS=

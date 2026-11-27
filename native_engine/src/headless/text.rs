@@ -1,0 +1,508 @@
+//! Human-readable snapshot tables for terminals.
+//!
+//! This module is deliberately separate from JSON/NDJSON: machines get the
+//! exact same schema as the desktop app, while an operator gets one line per
+//! target, stable columns, and colour-coded status.
+
+use super::term::Style;
+use super::{Snapshot, VERSION};
+use crate::stats::{TargetStats, TargetStatus};
+
+const STATUS_WIDTH: usize = 8;
+const MAX_NAME_WIDTH: usize = 22;
+const MAX_PROBE_WIDTH: usize = 28;
+const HTTP_WIDTH: usize = 16;
+const DETAIL_WIDTH: usize = 34;
+
+pub fn render(snapshot: &Snapshot, style: Style) -> String {
+    let show_http = snapshot.targets.iter().any(|target| {
+        target.http_status.is_some()
+            || target.cert_days_left.is_some()
+            || matches!(target.protocol.as_str(), "HTTP" | "HTTPS")
+    });
+    let show_detail = snapshot
+        .targets
+        .iter()
+        .any(|target| target.last_error.is_some() || target.tcp_fallback || target.stale);
+    let name_width = snapshot
+        .targets
+        .iter()
+        .map(|target| display_width(&target.name))
+        .max()
+        .unwrap_or(6)
+        .clamp(6, MAX_NAME_WIDTH);
+    let probe_width = snapshot
+        .targets
+        .iter()
+        .map(|target| display_width(&probe_text(target)))
+        .max()
+        .unwrap_or(10)
+        .clamp(10, MAX_PROBE_WIDTH);
+
+    let mut table_width =
+        STATUS_WIDTH + 2 + name_width + 2 + probe_width + 2 + 10 + 2 + 9 + 2 + 7 + 2 + 9;
+    if show_http {
+        table_width += 2 + HTTP_WIDTH;
+    }
+    if show_detail {
+        table_width += 2 + DETAIL_WIDTH;
+    }
+
+    let mut out = String::new();
+    out.push_str(&style.dim(&"-".repeat(table_width)));
+    out.push('\n');
+    out.push_str(&format!(
+        "{} {}  {}",
+        style.bold("NetStudio Headless"),
+        style.dim(&format!("v{VERSION}")),
+        style.dim(&snapshot.time)
+    ));
+    out.push('\n');
+
+    out.push_str(&style.dim(&format!(
+        "{:<STATUS_WIDTH$}  {:<name_width$}  {:<probe_width$}  {:>10}  {:>9}  {:>7}  {:>9}",
+        "STATUS", "TARGET", "PROBE", "RTT", "JITTER", "LOSS", "OK/SENT"
+    )));
+    if show_http {
+        out.push_str(&format!("  {:>HTTP_WIDTH$}", "HTTP/CERT"));
+    }
+    if show_detail {
+        out.push_str(&format!("  {:<DETAIL_WIDTH$}", "DETAIL"));
+    }
+    out.push('\n');
+    out.push_str(&style.dim(&"-".repeat(table_width)));
+    out.push('\n');
+
+    for target in snapshot.targets.iter() {
+        let status = status_cell(target.status, style);
+        let name = clip(&target.name, name_width);
+        let name_pad = name_width.saturating_sub(display_width(&name));
+        let probe = clip(&probe_text(target), probe_width);
+        let probe_pad = probe_width.saturating_sub(display_width(&probe));
+        out.push_str(&format!(
+            "{status}  {}{}  {}{}  {:>10}  {:>9}  {:>7}  {:>9}",
+            style.bold(&name),
+            " ".repeat(name_pad),
+            style.dim(&probe),
+            " ".repeat(probe_pad),
+            rtt_text(target),
+            jitter_text(target),
+            loss_text(target),
+            count_text(target)
+        ));
+        if show_http {
+            out.push_str("  ");
+            out.push_str(&http_cell(target, style));
+        }
+        if show_detail {
+            out.push_str("  ");
+            out.push_str(&detail_cell(target, style));
+        }
+        out.push('\n');
+    }
+
+    out.push_str(&summary_line(snapshot, style));
+    out.push('\n');
+    out
+}
+
+fn status_label(status: TargetStatus) -> &'static str {
+    match status {
+        TargetStatus::Pending => "PENDING",
+        TargetStatus::Online => "ONLINE",
+        TargetStatus::Degraded => "DEGRADED",
+        TargetStatus::Offline => "OFFLINE",
+    }
+}
+
+fn status_cell(status: TargetStatus, style: Style) -> String {
+    let label = status_label(status);
+    let painted = match status {
+        TargetStatus::Online => style.green(label),
+        TargetStatus::Degraded => style.yellow(label),
+        TargetStatus::Offline => style.red(label),
+        TargetStatus::Pending => style.dim(label),
+    };
+    format!(
+        "{painted}{}",
+        " ".repeat(STATUS_WIDTH.saturating_sub(label.len()))
+    )
+}
+
+fn probe_text(target: &TargetStats) -> String {
+    let host = if target.host.contains(':') && !target.host.starts_with('[') {
+        format!("[{}]", target.host)
+    } else {
+        target.host.clone()
+    };
+    format!("{} {}:{}", target.protocol, host, target.port)
+}
+
+fn rtt_text(target: &TargetStats) -> String {
+    if target.sent_count == 0 || target.last_rtt_ms < 0.0 {
+        "-".to_string()
+    } else {
+        format!("{:.2} ms", target.last_rtt_ms)
+    }
+}
+
+fn jitter_text(target: &TargetStats) -> String {
+    if target.received_count == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.2} ms", target.jitter_ms)
+    }
+}
+
+fn loss_text(target: &TargetStats) -> String {
+    if target.sent_count == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.1}%", target.loss_rate)
+    }
+}
+
+fn count_text(target: &TargetStats) -> String {
+    format!("{}/{}", target.received_count, target.sent_count)
+}
+
+fn http_cell(target: &TargetStats, style: Style) -> String {
+    let raw = match (target.http_status, target.cert_days_left) {
+        (Some(code), Some(days)) => format!("{code} | {days}d"),
+        (Some(code), None) => code.to_string(),
+        (None, Some(days)) => format!("{days}d"),
+        (None, None) => "-".to_string(),
+    };
+    let painted = if raw == "-" {
+        style.dim(&raw)
+    } else if target.http_status.is_some_and(|code| code >= 400)
+        || target.cert_days_left.is_some_and(|days| days <= 0)
+    {
+        style.red(&raw)
+    } else if target.cert_days_left.is_some_and(|days| days < 30) {
+        style.yellow(&raw)
+    } else {
+        style.green(&raw)
+    };
+    format!(
+        "{}{painted}",
+        " ".repeat(HTTP_WIDTH.saturating_sub(display_width(&raw)))
+    )
+}
+
+fn age_text(age_ms: Option<u64>) -> String {
+    let seconds = age_ms.unwrap_or(0) / 1_000;
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3_600 {
+        format!("{}m{:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h{:02}m", seconds / 3_600, (seconds % 3_600) / 60)
+    }
+}
+
+fn detail_text(target: &TargetStats) -> Option<String> {
+    let mut notes = Vec::new();
+    if target.stale {
+        notes.push(format!("stale {}", age_text(target.last_sample_age_ms)));
+    }
+    if target.tcp_fallback {
+        notes.push("tcp fallback".to_string());
+    }
+    if let Some(error) = &target.last_error {
+        let kind = target
+            .last_error_kind
+            .map(|kind| kind.as_str())
+            .unwrap_or("error");
+        notes.push(format!("{kind}: {error}"));
+    }
+    if notes.is_empty() {
+        None
+    } else {
+        Some(notes.join(" | "))
+    }
+}
+
+fn detail_cell(target: &TargetStats, style: Style) -> String {
+    let Some(raw) = detail_text(target) else {
+        return " ".repeat(DETAIL_WIDTH);
+    };
+    let clipped = clip(&raw, DETAIL_WIDTH);
+    let painted = if target.last_error.is_some() {
+        style.red(&clipped)
+    } else if target.stale || target.tcp_fallback {
+        style.yellow(&clipped)
+    } else {
+        style.dim(&clipped)
+    };
+    format!(
+        "{painted}{}",
+        " ".repeat(DETAIL_WIDTH.saturating_sub(display_width(&clipped)))
+    )
+}
+
+fn summary_line(snapshot: &Snapshot, style: Style) -> String {
+    let summary = &snapshot.summary;
+    let online = if summary.online > 0 {
+        style.green(&format!("{} online", summary.online))
+    } else {
+        style.dim("0 online")
+    };
+    let degraded = if summary.degraded > 0 {
+        style.yellow(&format!("{} degraded", summary.degraded))
+    } else {
+        style.dim("0 degraded")
+    };
+    let offline = if summary.offline > 0 {
+        style.red(&format!("{} offline", summary.offline))
+    } else {
+        style.dim("0 offline")
+    };
+    let pending = style.dim(&format!("{} pending", summary.pending));
+    let stale = if summary.stale > 0 {
+        style.yellow(&format!("{} stale", summary.stale))
+    } else {
+        style.dim("0 stale")
+    };
+    let down = if summary.down > 0 {
+        style.red(&format!("{} down", summary.down))
+    } else {
+        style.green("0 down")
+    };
+    [online, degraded, offline, pending, stale, down].join("  |  ")
+}
+
+fn clip(value: &str, width: usize) -> String {
+    if display_width(value) <= width {
+        return value.to_string();
+    }
+    let budget = width.saturating_sub(1);
+    let mut clipped = String::new();
+    let mut used = 0;
+    for character in value.chars() {
+        let cells = char_width(character);
+        if used + cells > budget {
+            break;
+        }
+        used += cells;
+        clipped.push(character);
+    }
+    clipped.push('~');
+    clipped
+}
+
+/// Terminal cells occupied by a string. Column padding must use this instead
+/// of char counts: CJK names, Hangul and emoji take two cells, combining marks
+/// take none.
+fn display_width(value: &str) -> usize {
+    value.chars().map(char_width).sum()
+}
+
+fn char_width(character: char) -> usize {
+    let code = character as u32;
+    if character.is_control() {
+        return 0;
+    }
+    match code {
+        // Combining marks, joiners and zero-width spaces attach to the
+        // preceding cell.
+        0x0300..=0x036F
+        | 0x0483..=0x0489
+        | 0x0591..=0x05BD
+        | 0x05BF
+        | 0x05C1..=0x05C2
+        | 0x05C4..=0x05C5
+        | 0x05C7
+        | 0x0610..=0x061A
+        | 0x064B..=0x065F
+        | 0x0670
+        | 0x06D6..=0x06ED
+        | 0x0711
+        | 0x0730..=0x074A
+        | 0x07A6..=0x07B0
+        | 0x07EB..=0x07F3
+        | 0x0900..=0x0903
+        | 0x093A
+        | 0x093C
+        | 0x0941..=0x0948
+        | 0x094D
+        | 0x0951..=0x0957
+        | 0x0962..=0x0963
+        | 0x1AB0..=0x1AFF
+        | 0x1DC0..=0x1DFF
+        | 0x200B..=0x200F
+        | 0x20D0..=0x20F0
+        | 0x1160..=0x11FF
+        | 0xFE00..=0xFE0F
+        | 0xFE20..=0xFE2F
+        | 0xE0100..=0xE01EF => 0,
+        // East Asian Wide/Fullwidth and emoji occupy two cells.
+        0x1100..=0x115F
+        | 0x2E80..=0x303E
+        | 0x3041..=0x33FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF
+        | 0xA960..=0xA97F
+        | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF
+        | 0xFE10..=0xFE19
+        | 0xFE30..=0xFE6F
+        | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1F64F
+        | 0x1F680..=0x1F6FF
+        | 0x1F900..=0x1F9FF
+        | 0x20000..=0x3FFFD => 2,
+        _ => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(
+        id: u32,
+        name: &str,
+        status: TargetStatus,
+        sent: u64,
+        received: u64,
+        rtt: f64,
+    ) -> TargetStats {
+        TargetStats {
+            id,
+            name: name.to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 80,
+            protocol: "TCP".to_string(),
+            status,
+            sent_count: sent,
+            received_count: received,
+            lost_count: sent.saturating_sub(received),
+            loss_rate: if sent == 0 {
+                0.0
+            } else {
+                (sent - received) as f64 * 100.0 / sent as f64
+            },
+            last_rtt_ms: rtt,
+            min_rtt_ms: rtt.max(0.0),
+            max_rtt_ms: rtt.max(0.0),
+            avg_rtt_ms: rtt.max(0.0),
+            jitter_ms: 0.25,
+            history: vec![],
+            last_checked_epoch_ms: 0,
+            last_success_epoch_ms: 0,
+            http_status: None,
+            cert_days_left: None,
+            last_error: None,
+            last_error_kind: None,
+            tcp_fallback: false,
+            stale: false,
+            last_sample_age_ms: Some(0),
+            stale_after_ms: 3_500,
+            group: String::new(),
+            muted: false,
+        }
+    }
+
+    #[test]
+    fn renders_a_readable_table_without_json_noise() {
+        let snapshot = Snapshot::new(vec![
+            target(1, "Primary", TargetStatus::Online, 10, 10, 1.234),
+            target(2, "Backup", TargetStatus::Offline, 10, 0, -1.0),
+        ]);
+        let text = render(&snapshot, Style::plain());
+
+        assert!(text.contains("ONLINE"));
+        assert!(text.contains("OFFLINE"));
+        assert!(text.contains("Primary"));
+        assert!(text.contains("1.23 ms"));
+        assert!(text.contains("0/10"));
+        assert!(text.contains("1 online"));
+        assert!(text.contains("1 offline"));
+        assert!(!text.contains("\"schema\""));
+        assert!(!text.contains("history"));
+    }
+
+    #[test]
+    fn colours_statuses_only_when_enabled() {
+        let snapshot = Snapshot::new(vec![target(1, "Primary", TargetStatus::Online, 1, 1, 2.0)]);
+        let colored = render(&snapshot, Style::colored());
+        assert!(colored.contains("\x1b[32mONLINE\x1b[0m"));
+        assert!(!render(&snapshot, Style::plain()).contains("\x1b["));
+    }
+
+    #[test]
+    fn http_and_certificate_column_appears_for_http_targets() {
+        let mut stats = target(1, "API", TargetStatus::Online, 1, 1, 3.0);
+        stats.protocol = "HTTPS".to_string();
+        stats.http_status = Some(200);
+        stats.cert_days_left = Some(42);
+        let text = render(&Snapshot::new(vec![stats]), Style::plain());
+        assert!(text.contains("HTTP/CERT"));
+        assert!(text.contains("200 | 42d"));
+    }
+
+    #[test]
+    fn detail_column_shows_error_kind_and_staleness() {
+        let mut failed = target(1, "DNS", TargetStatus::Offline, 3, 0, -1.0);
+        failed.last_error = Some("DNS resolution failed: no such host".to_string());
+        failed.last_error_kind = Some(crate::stats::ProbeErrorKind::Dns);
+        let mut stale = target(2, "Old", TargetStatus::Online, 1, 1, 5.0);
+        stale.stale = true;
+        stale.last_sample_age_ms = Some(12_000);
+        let text = render(&Snapshot::new(vec![failed, stale]), Style::plain());
+        assert!(text.contains("DETAIL"));
+        assert!(text.contains("dns: DNS resolution failed"));
+        assert!(text.contains("stale 12s"));
+        assert!(text.contains("1 stale"));
+    }
+
+    #[test]
+    fn wide_characters_keep_columns_aligned() {
+        let snapshot = Snapshot::new(vec![
+            target(1, "测试中文名称", TargetStatus::Online, 10, 10, 1.234),
+            target(2, "edge-🌐-01", TargetStatus::Online, 10, 10, 1.234),
+            target(3, "plain", TargetStatus::Online, 10, 10, 1.234),
+        ]);
+        let text = render(&snapshot, Style::plain());
+        let lines: Vec<&str> = text.lines().collect();
+        let table_width = display_width(lines[0]);
+        let mut rows = 0;
+        for line in &lines {
+            if line.starts_with("ONLINE") {
+                rows += 1;
+                assert_eq!(display_width(line), table_width, "ragged row: {line}");
+            }
+        }
+        assert_eq!(rows, 3);
+        // A two-cell name must be clipped by width, not by char count.
+        assert!(text.contains("测试"));
+    }
+
+    #[test]
+    fn display_width_counts_cells_not_chars() {
+        assert_eq!(display_width("abc"), 3);
+        assert_eq!(display_width("测试"), 4);
+        assert_eq!(display_width("e\u{301}"), 1);
+        assert_eq!(display_width("🌐"), 2);
+        // 5 cells of budget: two wide glyphs plus the ellipsis marker.
+        assert_eq!(clip("测试中文名称", 5), "测试~");
+        assert_eq!(display_width(&clip("测试中文名称", 5)), 5);
+    }
+
+    #[test]
+    fn long_names_are_clipped_to_keep_columns_aligned() {
+        let snapshot = Snapshot::new(vec![target(
+            1,
+            "a-very-long-target-name-that-does-not-fit",
+            TargetStatus::Online,
+            1,
+            1,
+            1.0,
+        )]);
+        let text = render(&snapshot, Style::plain());
+        assert!(text.contains("a-very-long-target-na~"));
+    }
+}

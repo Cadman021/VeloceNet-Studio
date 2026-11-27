@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netstudio-targets
+  labels:
+    app.kubernetes.io/name: netstudio-headless
+data:
+  # The same envelope the desktop app exports; --check validates it.
+  targets.json: |
+    {
+      "app": "velocenet-studio",
+      "version": 1,
+      "settings": { "offline_after": 3, "recover_after": 2 },
+      "targets": [
+        {
+          "id": 1,
+          "name": "Cloudflare DNS",
+          "host": "1.1.1.1",
+          "protocol": "ICMP",
+          "interval_ms": 15000,
+          "timeout_ms": 2000
+        },
+        {
+          "id": 2,
+          "name": "Cloudflare DNS over TCP",
+          "host": "1.1.1.1",
+          "port": 53,
+          "protocol": "TCP",
+          "interval_ms": 15000,
+          "timeout_ms": 2000
+        }
+      ]
+    }

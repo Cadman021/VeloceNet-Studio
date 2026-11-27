@@ -28,6 +28,21 @@ if exist "target\release\netstudio_engine.dll" (
     echo [WARN] target\release\netstudio_engine.dll not found.
 )
 
+echo.
+echo Copying netstudio-headless.exe to project directories...
+if exist "target\release\netstudio-headless.exe" (
+    copy /y "target\release\netstudio-headless.exe" "%~dp0\"
+    if exist "%~dp0\build\windows\x64\runner\Debug" (
+        copy /y "target\release\netstudio-headless.exe" "%~dp0\build\windows\x64\runner\Debug\"
+    )
+    if exist "%~dp0\build\windows\x64\runner\Release" (
+        copy /y "target\release\netstudio-headless.exe" "%~dp0\build\windows\x64\runner\Release\"
+    )
+    echo Copied netstudio-headless.exe successfully.
+) else (
+    echo [WARN] target\release\netstudio-headless.exe not found.
+)
+
 echo ========================================================
 echo Done. You can now run 'flutter run -d windows'
 echo ========================================================

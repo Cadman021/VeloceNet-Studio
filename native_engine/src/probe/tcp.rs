@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+use crate::stats::ProbeErrorKind;
+
 #[derive(Debug, Clone)]
 pub struct ProbeResult {
     pub success: bool,
@@ -17,6 +19,11 @@ pub struct ProbeResult {
     /// HTTPS probes only: days until the peer certificate expires
     /// (negative = already expired). Sticky in the tracker.
     pub cert_days_left: Option<i64>,
+    /// Machine-readable reason for a failed probe.
+    pub error_kind: Option<ProbeErrorKind>,
+    /// True when an ICMP probe fell back to TCP because native ICMP was
+    /// unavailable. The sample's RTT/error then belongs to the TCP attempt.
+    pub tcp_fallback: bool,
 }
 
 impl ProbeResult {
@@ -28,10 +35,16 @@ impl ProbeResult {
             icmp_unavailable: false,
             http_status: None,
             cert_days_left: None,
+            error_kind: None,
+            tcp_fallback: false,
         }
     }
 
     pub fn failure(error: impl Into<String>) -> Self {
+        Self::failure_kind(ProbeErrorKind::Other, error)
+    }
+
+    pub fn failure_kind(kind: ProbeErrorKind, error: impl Into<String>) -> Self {
         Self {
             success: false,
             rtt_ms: -1.0,
@@ -39,6 +52,8 @@ impl ProbeResult {
             icmp_unavailable: false,
             http_status: None,
             cert_days_left: None,
+            error_kind: Some(kind),
+            tcp_fallback: false,
         }
     }
 
@@ -50,7 +65,20 @@ impl ProbeResult {
             icmp_unavailable: true,
             http_status: None,
             cert_days_left: None,
+            error_kind: Some(ProbeErrorKind::IcmpUnavailable),
+            tcp_fallback: false,
         }
+    }
+
+    /// Marks a result as the TCP fallback for an ICMP probe.
+    pub fn with_tcp_fallback(mut self) -> Self {
+        self.tcp_fallback = true;
+        self
+    }
+
+    pub fn with_error_kind(mut self, kind: ProbeErrorKind) -> Self {
+        self.error_kind = Some(kind);
+        self
     }
 
     /// HTTP(S) result: success is the caller's verdict on `status`.
@@ -61,6 +89,7 @@ impl ProbeResult {
         cert_days_left: Option<i64>,
         error: Option<String>,
     ) -> Self {
+        let error_kind = error.as_ref().map(|_| ProbeErrorKind::Http);
         Self {
             success,
             rtt_ms,
@@ -68,6 +97,32 @@ impl ProbeResult {
             icmp_unavailable: false,
             http_status: status,
             cert_days_left,
+            error_kind,
+            tcp_fallback: false,
+        }
+    }
+}
+
+/// Classifies a connect/read error without relying on a platform-specific
+/// numeric code. The message fallback catches Windows/Winsock wording that
+/// does not map to the portable ErrorKind variants.
+pub fn classify_io_error(error: &std::io::Error) -> ProbeErrorKind {
+    match error.kind() {
+        std::io::ErrorKind::ConnectionRefused => ProbeErrorKind::Refused,
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => ProbeErrorKind::Timeout,
+        _ => {
+            let text = error.to_string().to_ascii_lowercase();
+            if text.contains("refused") {
+                ProbeErrorKind::Refused
+            } else if text.contains("timed out") {
+                ProbeErrorKind::Timeout
+            } else if text.contains("unreachable") {
+                ProbeErrorKind::Unreachable
+            } else if text.contains("name") || text.contains("dns") || text.contains("resolve") {
+                ProbeErrorKind::Dns
+            } else {
+                ProbeErrorKind::Other
+            }
         }
     }
 }
@@ -86,15 +141,21 @@ pub async fn resolve_target_addrs(
         Ok(Ok(iter)) => {
             let addrs: Vec<SocketAddr> = iter.collect();
             if addrs.is_empty() {
-                return Err(ProbeResult::failure("No IP address resolved for host"));
+                return Err(ProbeResult::failure_kind(
+                    ProbeErrorKind::Dns,
+                    "No IP address resolved for host",
+                ));
             }
             Ok(addrs)
         }
-        Ok(Err(e)) => Err(ProbeResult::failure(format!(
-            "DNS resolution failed: {}",
-            e
-        ))),
-        Err(_) => Err(ProbeResult::failure("DNS resolution timed out")),
+        Ok(Err(e)) => Err(ProbeResult::failure_kind(
+            ProbeErrorKind::Dns,
+            format!("DNS resolution failed: {}", e),
+        )),
+        Err(_) => Err(ProbeResult::failure_kind(
+            ProbeErrorKind::Timeout,
+            "DNS resolution timed out",
+        )),
     }
 }
 
@@ -103,7 +164,8 @@ pub async fn resolve_target_addrs(
 /// condemns the target while a working sibling exists).
 pub async fn probe_tcp_addrs(addrs: &[SocketAddr], timeout_duration: Duration) -> ProbeResult {
     let deadline = Instant::now() + timeout_duration;
-    let mut last_error = "No IP address resolved for host".to_string();
+    let mut last_error = "Connection timed out".to_string();
+    let mut last_kind = ProbeErrorKind::Timeout;
 
     for addr in addrs {
         let remaining = match deadline.checked_duration_since(Instant::now()) {
@@ -118,15 +180,17 @@ pub async fn probe_tcp_addrs(addrs: &[SocketAddr], timeout_duration: Duration) -
                 return ProbeResult::success(rtt);
             }
             Ok(Err(e)) => {
+                last_kind = classify_io_error(&e);
                 last_error = format!("Connect failed: {}", e);
             }
             Err(_) => {
+                last_kind = ProbeErrorKind::Timeout;
                 last_error = "Connection timed out".to_string();
             }
         }
     }
 
-    ProbeResult::failure(last_error)
+    ProbeResult::failure_kind(last_kind, last_error)
 }
 
 pub async fn probe_tcp(host: &str, port: u16, timeout_duration: Duration) -> ProbeResult {
@@ -137,7 +201,9 @@ pub async fn probe_tcp(host: &str, port: u16, timeout_duration: Duration) -> Pro
     };
     let remaining = match timeout_duration.checked_sub(start.elapsed()) {
         Some(rem) if rem > Duration::from_millis(5) => rem,
-        _ => return ProbeResult::failure("Timeout during resolution"),
+        _ => {
+            return ProbeResult::failure_kind(ProbeErrorKind::Timeout, "Timeout during resolution")
+        }
     };
     probe_tcp_addrs(&addrs, remaining).await
 }

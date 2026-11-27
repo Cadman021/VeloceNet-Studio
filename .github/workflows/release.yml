@@ -26,10 +26,11 @@ jobs:
         working-directory: native_engine
         run: cargo build --release
 
-      - name: Stage engine DLL
+      - name: Stage engine DLL and headless daemon
         shell: pwsh
         run: |
           Copy-Item native_engine/target/release/netstudio_engine.dll -Destination . -Force
+          Copy-Item native_engine/target/release/netstudio-headless.exe -Destination . -Force
 
       - uses: subosito/flutter-action@v2
         with:
@@ -52,19 +53,32 @@ jobs:
       - name: Build Windows release
         run: flutter build windows --release
 
-      - name: Bundle DLL next to the executable
+      - name: Bundle engine and daemon next to the executable
         shell: pwsh
         run: |
           $exe = Get-ChildItem build/windows/x64/runner/Release -Filter *.exe | Select-Object -First 1
           if ($null -eq $exe) { throw "No exe found in build/windows/x64/runner/Release" }
           Copy-Item netstudio_engine.dll -Destination build/windows/x64/runner/Release -Force
+          Copy-Item netstudio-headless.exe -Destination build/windows/x64/runner/Release -Force
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath velocenet-studio-windows-x64.zip -Force
+
+      # Headless-only archive: a daemon host does not need the Flutter runtime,
+      # and this zip is a few MB instead of a whole bundle.
+      - name: Package standalone headless daemon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path headless -Force | Out-Null
+          Copy-Item native_engine/target/release/netstudio-headless.exe headless/ -Force
+          Copy-Item docs/examples/targets.json headless/targets.example.json -Force
+          Compress-Archive -Path headless/* -DestinationPath netstudio-headless-windows-x64.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-windows-x64
-          path: velocenet-studio-windows-x64.zip
+          path: |
+            velocenet-studio-windows-x64.zip
+            netstudio-headless-windows-x64.zip
 
   build-linux:
     name: Build Linux bundle
@@ -106,16 +120,27 @@ jobs:
       - name: Build Linux release
         run: flutter build linux --release
 
-      - name: Bundle .so next to the executable
+      - name: Bundle .so and daemon next to the executable
         run: |
           cp native_engine/target/release/libnetstudio_engine.so build/linux/x64/release/bundle/
+          cp native_engine/target/release/netstudio-headless build/linux/x64/release/bundle/
           tar -czf velocenet-studio-linux-x64.tar.gz -C build/linux/x64/release/bundle .
+
+      # Headless-only archive (see the Windows job).
+      - name: Package standalone headless daemon
+        run: |
+          mkdir -p headless
+          cp native_engine/target/release/netstudio-headless headless/
+          cp docs/examples/targets.json headless/targets.example.json
+          tar -czf netstudio-headless-linux-x64.tar.gz -C headless .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-linux-x64
-          path: velocenet-studio-linux-x64.tar.gz
+          path: |
+            velocenet-studio-linux-x64.tar.gz
+            netstudio-headless-linux-x64.tar.gz
 
   build-macos:
     name: Build macOS bundle
@@ -150,21 +175,85 @@ jobs:
       - name: Build macOS release
         run: flutter build macos --release
 
-      - name: Bundle .dylib inside the .app and zip it
+      - name: Bundle .dylib and daemon inside the .app and zip it
         run: |
           APP=$(ls -d build/macos/Build/Products/Release/*.app | head -1)
           cp native_engine/target/release/libnetstudio_engine.dylib "$APP/Contents/MacOS/"
+          cp native_engine/target/release/netstudio-headless "$APP/Contents/MacOS/"
           ditto -c -k --sequesterRsrc --keepParent "$APP" velocenet-studio-macos-arm64.zip
+
+      # Headless-only archive (see the Windows job).
+      - name: Package standalone headless daemon
+        run: |
+          mkdir -p headless
+          cp native_engine/target/release/netstudio-headless headless/
+          cp docs/examples/targets.json headless/targets.example.json
+          ditto -c -k --sequesterRsrc --keepParent headless netstudio-headless-macos-arm64.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: velocenet-studio-macos-arm64
-          path: velocenet-studio-macos-arm64.zip
+          path: |
+            velocenet-studio-macos-arm64.zip
+            netstudio-headless-macos-arm64.zip
 
+  # Debian/Ubuntu and RHEL/Fedora packages for the headless daemon.
+  #
+  # Built inside debian:bullseye on purpose: a binary linked against a newer
+  # glibc refuses to start on an older distribution. glibc 2.31 is the floor
+  # declared in deploy/linux/build-package.sh, which keeps the same .deb and
+  # .rpm usable on Debian 11-13, Ubuntu 20.04+ and RHEL 9+.
+  build-linux-packages:
+    name: Build Linux packages (.deb, .rpm, SBOM)
+    runs-on: ubuntu-latest
+    container: debian:bullseye
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install packaging tools
+        run: |
+          apt-get update -y
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git pkg-config python3 rpm systemd xz-utils
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the headless daemon
+        working-directory: native_engine
+        run: cargo build --release
+
+      - name: Build .deb and .rpm
+        run: |
+          bash deploy/linux/build-package.sh --format deb --outdir dist
+          bash deploy/linux/build-package.sh --format rpm --outdir dist
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' native_engine/Cargo.toml | head -n 1)
+          python3 tool/headless-sbom.py --output "dist/netstudio-headless-${VERSION}.cdx.json"
+
+      - name: Inspect the packages
+        run: |
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+          rpm -qip dist/*.rpm
+          rpm -qlp dist/*.rpm
+
+      - name: Install, validate the unit, uninstall
+        run: |
+          dpkg -i dist/*.deb
+          systemd-analyze verify /lib/systemd/system/netstudio-headless.service
+          dpkg -r netstudio-headless
+          test ! -e /usr/bin/netstudio-headless
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: netstudio-headless-linux-packages
+          path: dist/*
   publish:
     name: Publish GitHub Release
-    needs: [build-windows, build-linux, build-macos]
+    needs: [build-windows, build-linux, build-macos, build-linux-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -175,7 +264,9 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum velocenet-studio-* > SHA256SUMS.txt
+          # Every asset, including the .deb, .rpm and the SBOM.
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' \
+            | sort | xargs -r sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
