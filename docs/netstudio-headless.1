@@ -46,8 +46,9 @@ Probe every target this often, overriding each target's own interval_ms.
 .BI \-\-probe\-concurrency " " N
 Maximum probes in flight, 1 to 256 (default 32).
 .TP
-.BI \-\-listen " " ADDR
-Serve HTTP on ADDR, for example 127.0.0.1:9101. Daemon mode only.
+.BI \-\-watch\-config " " SECS
+Poll the config file every 1 to 3600 seconds and reload it when it changes.
+Daemon mode only; useful where SIGHUP cannot be delivered.
 .TP
 .BI \-\-output " " PATH
 Atomically replace PATH with the latest JSON snapshot.
@@ -103,6 +104,8 @@ Disable ANSI colour, like
 Reload the config file and re-read
 .B \-\-http\-token\-file
 without a restart (Unix).
+.B \-\-watch\-config
+provides the same reload where SIGHUP is unavailable.
 .TP
 .B SIGINT ", " SIGTERM
 Graceful stop: cancel probes, close the HTTP listener and remove the pid

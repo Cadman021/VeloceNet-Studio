@@ -31,7 +31,7 @@ _netstudio_headless() {
             COMPREPLY=( $(compgen -W "127.0.0.1:9101 0.0.0.0:9101" -- "$cur") )
             return 0
             ;;
-        --interval|--probe-interval|--probe-concurrency)
+        --interval|--probe-interval|--probe-concurrency|--watch-config)
             COMPREPLY=()
             return 0
             ;;
@@ -39,7 +39,8 @@ _netstudio_headless() {
 
     local options="
         -c --config --check --once --interval --probe-interval
-        --probe-concurrency --listen --output --pid-file --http-token-file
+        --probe-concurrency --watch-config --listen --output --pid-file
+        --http-token-file
         -q --quiet --format --color --no-color --log-level --log-format
         -h --help -V --version
     "

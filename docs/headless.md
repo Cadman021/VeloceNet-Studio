@@ -226,6 +226,7 @@ netstudio-headless --config targets.json --interval 15 --probe-concurrency 32 --
 | `--interval <SECS>` | Snapshot interval, 1–3600 (default 5) |
 | `--probe-interval <SECS>` | Probe every target this often, overriding each `interval_ms` (1–3600) |
 | `--probe-concurrency <N>` | Maximum probes in flight, 1–256 (default 32) |
+| `--watch-config <SECS>` | Reload the config file when it changes, checked every 1–3600 s; daemon only |
 | `--listen <IP:PORT>` | Enable HTTP (disabled by default); daemon only |
 | `--output <PATH>` | Atomically replace this file with the latest snapshot |
 | `--pid-file <PATH>` | Write the process id while running; daemon only |
@@ -324,13 +325,18 @@ every scrape.
   unchanged targets keep their history. Alert thresholds (`settings`) apply
   immediately, and `/readyz` expects the new target count. A file that does not
   parse is logged as an error and the running configuration stays in place, so
-  a bad edit never takes the daemon down. The same `SIGHUP` also re-reads
-  `--http-token-file`, so a secret can be rotated without a restart: the new
-  token applies to the next connection and the old one is refused at once. A
-  file that is missing, empty or invalid keeps the previous token in force and
-  is logged as a warning, so a broken mount can never leave the endpoint
-  unauthenticated. Windows has no equivalent signal: restart the process
-  there.
+  a bad edit never takes the daemon down.
+* Windows delivers no `SIGHUP`, and neither do most containers, so pass
+  `--watch-config <SECS>` there: the daemon compares the file's modification
+  time and size every 1–3600 seconds and runs the same reload, logging
+  `<path> changed; reloading`. A file that stays broken is attempted once,
+  not once per poll; the next edit retries. `--watch-config` works on Unix
+  too and does nothing while the file is unchanged.
+* On Unix the same `SIGHUP` also re-reads `--http-token-file`, so a secret can
+  be rotated without a restart: the new token applies to the next connection
+  and the old one is refused at once. A file that is missing, empty or invalid
+  keeps the previous token in force and is logged as a warning, so a broken
+  mount can never leave the endpoint unauthenticated.
 * Logs go to stderr as `TIMESTAMP LEVEL message`; stdout is reserved for
   snapshots. With `--log-format json` each line is
   `{"time":"…","level":"warn","msg":"…"}` and never contains ANSI colour, so

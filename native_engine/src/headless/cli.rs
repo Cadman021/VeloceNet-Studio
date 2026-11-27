@@ -43,6 +43,9 @@ pub const HELP: &str = concat!(
     "                          Probe every target this often (default: per target)\n",
     "      --probe-concurrency <N>\n",
     "                          Maximum probes in flight (default: 32)\n",
+    "      --watch-config <SECS>\n",
+    "                          Reload the config file when it changes (daemon\n",
+    "                          mode; default: only on SIGHUP)\n",
     "      --listen <ADDR>     Serve HTTP on ADDR (daemon mode), e.g. 127.0.0.1:9101\n",
     "      --output <PATH>     Atomically write the latest JSON snapshot to PATH\n",
     "      --pid-file <PATH>   Write the process id to PATH (daemon mode)\n",
@@ -79,6 +82,9 @@ pub struct Cli {
     /// Global probe cadence override; None keeps each target's interval_ms.
     pub probe_interval_secs: Option<u64>,
     pub probe_concurrency: usize,
+    /// Poll the config file this often and reload on change; None relies on
+    /// SIGHUP alone (Windows and most containers have no HUP).
+    pub watch_config_secs: Option<u64>,
     pub listen: Option<SocketAddr>,
     pub output: Option<PathBuf>,
     pub pid_file: Option<PathBuf>,
@@ -104,6 +110,7 @@ impl Default for Cli {
             interval_secs: 5,
             probe_interval_secs: None,
             probe_concurrency: 32,
+            watch_config_secs: None,
             listen: None,
             output: None,
             pid_file: None,
@@ -179,6 +186,16 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                 }
                 cli.probe_concurrency = limit;
             }
+            "--watch-config" => {
+                let value = take_value(&flag, inline, args, &mut index)?;
+                let seconds: u64 = value
+                    .parse()
+                    .map_err(|_| format!("invalid --watch-config value: {value}"))?;
+                if !(1..=3600).contains(&seconds) {
+                    return Err("--watch-config must be between 1 and 3600 seconds".to_string());
+                }
+                cli.watch_config_secs = Some(seconds);
+            }
             "--listen" => {
                 let value = take_value(&flag, inline, args, &mut index)?;
                 let address: SocketAddr = value
@@ -239,6 +256,11 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     }
     if cli.once && cli.pid_file.is_some() {
         return Err("--pid-file is a daemon option and cannot be combined with --once".to_string());
+    }
+    if cli.once && cli.watch_config_secs.is_some() {
+        return Err(
+            "--watch-config is a daemon option and cannot be combined with --once".to_string(),
+        );
     }
     if cli.once && cli.http_token_file.is_some() {
         return Err(
@@ -339,6 +361,9 @@ mod tests {
         assert!(parse(&args(&["--probe-concurrency", "0"])).is_err());
         assert!(parse(&args(&["--probe-concurrency", "257"])).is_err());
         assert!(parse(&args(&["--probe-concurrency", "many"])).is_err());
+        assert!(parse(&args(&["--watch-config", "0"])).is_err());
+        assert!(parse(&args(&["--watch-config", "3601"])).is_err());
+        assert!(parse(&args(&["--watch-config", "soon"])).is_err());
         assert!(parse(&args(&["--listen", "localhost"])).is_err());
         assert!(parse(&args(&["--log-level", "trace"])).is_err());
         assert!(parse(&args(&["--format", "yaml"])).is_err());
@@ -375,6 +400,22 @@ mod tests {
             "token"
         ]))
         .is_err());
+        assert!(parse(&args(&[
+            "--config",
+            "targets.json",
+            "--once",
+            "--watch-config",
+            "2"
+        ]))
+        .is_err());
+        assert!(parse(&args(&[
+            "--config",
+            "targets.json",
+            "--check",
+            "--watch-config",
+            "2"
+        ]))
+        .is_ok());
         // --output is meaningful for --once (it writes the snapshot there).
         assert!(parse(&args(&[
             "--config",

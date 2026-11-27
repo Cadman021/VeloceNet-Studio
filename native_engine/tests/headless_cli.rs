@@ -977,5 +977,85 @@ fn daemon_rotates_the_http_token_on_sighup_and_keeps_it_when_the_file_is_bad() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn daemon_reloads_a_changed_config_file_when_watching_is_enabled() {
+    use std::time::{Duration, Instant};
+
+    let dir = temp_dir();
+    let config = dir.join("targets.json");
+    let write = |targets: Value| {
+        let file = serde_json::json!({
+            "app": "velocenet-studio",
+            "version": 1,
+            "targets": targets
+        });
+        fs::write(&config, serde_json::to_string_pretty(&file).expect("json")).expect("write");
+    };
+    let target = |id: u32, name: &str| {
+        serde_json::json!({
+            "id": id,
+            "name": name,
+            "host": "127.0.0.1",
+            "port": 9,
+            "protocol": "TCP",
+            "interval_ms": 200,
+            "timeout_ms": 500
+        })
+    };
+    write(serde_json::json!([target(1, "one")]));
+
+    let snapshot_path = dir.join("status.json");
+    let mut child = Command::new(binary())
+        .args([
+            "--config".as_ref(),
+            config.as_os_str(),
+            "--output".as_ref(),
+            snapshot_path.as_os_str(),
+            "--watch-config".as_ref(),
+            "1".as_ref(),
+            "--interval".as_ref(),
+            "1".as_ref(),
+            "--quiet".as_ref(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+
+    let wait_for = |count: usize| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if let Ok(text) = fs::read_to_string(&snapshot_path) {
+                if let Ok(json) = serde_json::from_str::<Value>(&text) {
+                    if json["targets"].as_array().map(Vec::len) == Some(count) {
+                        return json;
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("no snapshot with {count} target(s) before the deadline");
+    };
+    wait_for(1);
+
+    write(serde_json::json!([target(1, "one"), target(2, "two")]));
+    let reloaded = wait_for(2);
+    assert_eq!(reloaded["targets"][1]["name"], "two");
+    // The unchanged target kept its history across the polled reload.
+    assert!(reloaded["targets"][0]["sent_count"].as_u64().unwrap_or(0) >= 1);
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let mut log = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = std::io::Read::read_to_string(&mut stderr, &mut log);
+    }
+    assert!(log.contains("for changes every 1s"), "{log}");
+    assert!(log.contains("changed; reloading"), "{log}");
+    assert!(log.contains("reloaded 2 target(s)"), "{log}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[cfg(unix)]
 fn _unix_only_marker() {}

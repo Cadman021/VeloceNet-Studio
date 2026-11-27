@@ -8,6 +8,7 @@ _arguments -s \
   '--interval[Snapshot interval in seconds]:seconds:' \
   '--probe-interval[Probe cadence override in seconds]:seconds:' \
   '--probe-concurrency[Maximum probes in flight]:count:' \
+  '--watch-config[Reload the config file when it changes]:seconds:' \
   '--listen[Serve HTTP on ADDR]:address:' \
   '--output[Write the latest snapshot to PATH]:file:_files' \
   '--pid-file[Claim PATH and write the pid]:file:_files' \

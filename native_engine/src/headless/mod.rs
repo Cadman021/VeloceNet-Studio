@@ -617,6 +617,17 @@ fn run_daemon(
     if let Some(path) = &cli.output {
         log::info(format!("snapshot file: {}", path.display()));
     }
+    let mut watch = cli.watch_config_secs.map(|seconds| {
+        log::info(format!(
+            "watching {} for changes every {seconds}s",
+            config_path.display()
+        ));
+        Watch {
+            period: Duration::from_secs(seconds),
+            next: Instant::now() + Duration::from_secs(seconds),
+            stamp: config_stamp(config_path),
+        }
+    });
 
     engine.start();
     let mut next_emit = Instant::now();
@@ -626,7 +637,22 @@ fn run_daemon(
     // recovery: the same message every second buries everything else.
     let mut output_error: Option<String> = None;
     while !signal::shutdown_requested() {
-        if signal::take_reload_request() {
+        let mut reload_reason = signal::take_reload_request().then_some("SIGHUP");
+        if let Some(watch) = &mut watch {
+            if Instant::now() >= watch.next {
+                watch.next = Instant::now() + watch.period;
+                let current = config_stamp(config_path);
+                if current != watch.stamp {
+                    watch.stamp = current;
+                    // A SIGHUP that landed on the same tick already reloads.
+                    if reload_reason.is_none() {
+                        reload_reason = Some("watch");
+                        log::info(format!("{} changed; reloading", config_path.display()));
+                    }
+                }
+            }
+        }
+        if reload_reason.is_some() {
             let outcome = reload(&engine, &state, cli, config_path, &mut applied);
             state.health().note_reload(outcome.is_ok());
             match outcome {
@@ -640,6 +666,11 @@ fn run_daemon(
             }
             if let Some(server) = &server {
                 refresh_http_token(cli, server);
+            }
+            // Remember what was loaded, so a watcher does not retry the same
+            // broken file every period; the next edit triggers a new attempt.
+            if let Some(watch) = &mut watch {
+                watch.stamp = config_stamp(config_path);
             }
         }
         let tick_started = Instant::now();
@@ -690,6 +721,29 @@ fn run_daemon(
     drop(pid_file);
     log::info("stopped");
     EXIT_OK
+}
+
+/// Polled config file state, used when SIGHUP is unavailable.
+struct Watch {
+    period: Duration,
+    next: Instant,
+    stamp: Option<ConfigStamp>,
+}
+
+/// Modified time plus size: one alone misses edits on filesystems with a
+/// coarse timestamp, and both are cheap to read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ConfigStamp {
+    modified: Option<std::time::SystemTime>,
+    size: u64,
+}
+
+fn config_stamp(path: &Path) -> Option<ConfigStamp> {
+    let metadata = fs::metadata(path).ok()?;
+    Some(ConfigStamp {
+        modified: metadata.modified().ok(),
+        size: metadata.len(),
+    })
 }
 
 /// SIGHUP also rotates the bearer token. A missing, empty or unreadable
