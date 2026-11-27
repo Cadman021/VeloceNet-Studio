@@ -40,7 +40,7 @@ _netstudio_headless() {
     local options="
         -c --config --check --once --interval --probe-interval
         --probe-concurrency --watch-config --listen --output --pid-file
-        --http-token-file --log-file
+        --http-token-file --log-file --windows-service
         -q --quiet --format --color --no-color --log-level --log-format
         -h --help -V --version
     "

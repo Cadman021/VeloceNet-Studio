@@ -20,5 +20,6 @@ _arguments -s \
   '--log-level[Log verbosity]:level:(error warn info debug)' \
   '--log-format[Log line format]:format:(text json)' \
   '--log-file[Append logs to PATH too]:file:_files' \
+  '--windows-service[Run under the Windows Service Control Manager]' \
   '(-h --help)'{-h,--help}'[Print help and exit]' \
   '(-V --version)'{-V,--version}'[Print the version and exit]'

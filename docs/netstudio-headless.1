@@ -61,6 +61,14 @@ Daemon mode only.
 Require "Authorization: Bearer <token>" on every HTTP endpoint except
 /healthz; the token is read from PATH. Daemon mode only.
 .TP
+.BR \-\-windows\-service
+Let the Windows Service Control Manager own the process. Daemon mode, Windows
+only; started from a shell it exits 2 instead of probing invisibly.
+.TP
+.BR \-\-windows\-service
+Let the Windows Service Control Manager own the process. Daemon mode, Windows
+only; started from a shell it exits 2 instead of probing invisibly.
+.TP
 .BR \-q ", " \-\-quiet
 Do not stream snapshots to stdout. The HTTP endpoints and
 .B \-\-output

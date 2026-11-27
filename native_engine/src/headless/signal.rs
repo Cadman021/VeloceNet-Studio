@@ -9,6 +9,12 @@ pub fn shutdown_requested() -> bool {
     SHUTDOWN.load(Ordering::Relaxed)
 }
 
+/// Used by the Windows service control handler, which is the service-side
+/// equivalent of Ctrl+C.
+pub fn request_shutdown() {
+    SHUTDOWN.store(true, Ordering::Relaxed);
+}
+
 /// True once since the last call: SIGHUP is level-triggered by the kernel but
 /// the daemon wants to act on it exactly once.
 pub fn take_reload_request() -> bool {

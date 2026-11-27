@@ -48,6 +48,8 @@ pub const HELP: &str = concat!(
     "                          Reload the config file when it changes (daemon\n",
     "                          mode; default: only on SIGHUP)\n",
     "      --listen <ADDR>     Serve HTTP on ADDR (daemon mode), e.g. 127.0.0.1:9101\n",
+    "      --windows-service   Let the Windows Service Control Manager start and\n",
+    "                          stop the daemon (daemon mode, Windows only)\n",
     "      --output <PATH>     Atomically write the latest JSON snapshot to PATH\n",
     "      --pid-file <PATH>   Write the process id to PATH (daemon mode)\n",
     "      --http-token-file <PATH>\n",
@@ -89,6 +91,8 @@ pub struct Cli {
     /// SIGHUP alone (Windows and most containers have no HUP).
     pub watch_config_secs: Option<u64>,
     pub listen: Option<SocketAddr>,
+    /// Started by SCM, not by a shell: report status to the service manager.
+    pub windows_service: bool,
     pub output: Option<PathBuf>,
     pub pid_file: Option<PathBuf>,
     /// File holding the bearer token required by the HTTP server; None keeps
@@ -117,6 +121,7 @@ impl Default for Cli {
             probe_concurrency: 32,
             watch_config_secs: None,
             listen: None,
+            windows_service: false,
             output: None,
             pid_file: None,
             http_token_file: None,
@@ -209,6 +214,10 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                     .map_err(|_| format!("invalid --listen address {value}: expected IP:PORT"))?;
                 cli.listen = Some(address);
             }
+            "--windows-service" => {
+                reject_value(&flag, inline.as_deref())?;
+                cli.windows_service = true;
+            }
             "--output" => {
                 cli.output = Some(PathBuf::from(take_value(&flag, inline, args, &mut index)?));
             }
@@ -269,6 +278,16 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     if cli.once && cli.watch_config_secs.is_some() {
         return Err(
             "--watch-config is a daemon option and cannot be combined with --once".to_string(),
+        );
+    }
+    if cli.once && cli.windows_service {
+        return Err(
+            "--windows-service is a daemon option and cannot be combined with --once".to_string(),
+        );
+    }
+    if cli.check && cli.windows_service {
+        return Err(
+            "--windows-service is a daemon option and cannot be combined with --check".to_string(),
         );
     }
     if cli.once && cli.http_token_file.is_some() {
@@ -430,6 +449,22 @@ mod tests {
             "2"
         ]))
         .is_ok());
+        // The service flag only makes sense for the long-running daemon.
+        assert!(parse(&args(&[
+            "--config",
+            "targets.json",
+            "--once",
+            "--windows-service"
+        ]))
+        .is_err());
+        assert!(parse(&args(&[
+            "--config",
+            "targets.json",
+            "--check",
+            "--windows-service"
+        ]))
+        .is_err());
+        assert!(parse(&args(&["--config", "targets.json", "--windows-service"])).is_ok());
         // --output is meaningful for --once (it writes the snapshot there).
         assert!(parse(&args(&[
             "--config",

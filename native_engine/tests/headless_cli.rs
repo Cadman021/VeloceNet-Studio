@@ -510,6 +510,40 @@ fn check_fails_when_a_preflight_path_is_unusable() {
 
 #[cfg(windows)]
 #[test]
+fn windows_service_mode_refuses_a_console_start() {
+    let dir = temp_dir();
+    let config = write_config(
+        &dir,
+        serde_json::json!({ "host": "127.0.0.1", "port": 9, "protocol": "TCP" }),
+    );
+    let log_path = dir.join("service.log");
+    let output = run(&[
+        "--config".as_ref(),
+        config.as_os_str(),
+        "--windows-service".as_ref(),
+        "--log-file".as_ref(),
+        log_path.as_os_str(),
+    ]);
+    // 1063: not started by SCM. Say so instead of hanging or probing nothing.
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot run as a Windows service"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("sc.exe start netstudio-headless"),
+        "{stderr}"
+    );
+    let file = fs::read_to_string(&log_path).expect("log file");
+    assert!(
+        file.contains("cannot run as a Windows service"),
+        "the log file must exist before the dispatcher runs: {file}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn log_file_receives_every_line_in_plain_text() {
     let dir = temp_dir();
     let config = write_config(

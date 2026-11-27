@@ -9,6 +9,8 @@ mod config;
 mod http;
 mod log;
 mod metrics;
+#[cfg(windows)]
+mod service;
 mod signal;
 mod term;
 mod text;
@@ -274,6 +276,17 @@ pub fn main_entry() -> i32 {
     }
 }
 
+#[cfg(windows)]
+fn run_as_windows_service(cli: cli::Cli) -> i32 {
+    service::run(cli)
+}
+
+#[cfg(not(windows))]
+fn run_as_windows_service(_cli: cli::Cli) -> i32 {
+    log::error("--windows-service is only supported on Windows");
+    EXIT_CONFIG
+}
+
 fn run(cli: cli::Cli) -> i32 {
     term::init(cli.color);
     log::set_level(cli.log_level);
@@ -296,6 +309,9 @@ fn run(cli: cli::Cli) -> i32 {
     if cli.version {
         println!("{NAME} {VERSION}");
         return EXIT_OK;
+    }
+    if cli.windows_service {
+        return run_as_windows_service(cli);
     }
     let Some(config_path) = cli.config.clone() else {
         log::error("--config <PATH> is required");
@@ -647,6 +663,12 @@ fn run_daemon(
         }
     });
 
+    // Only now is the daemon really serving: SCM can tell `sc.exe start` that
+    // the service is up instead of merely spawned.
+    #[cfg(windows)]
+    if cli.windows_service {
+        service::mark_running();
+    }
     engine.start();
     let mut next_emit = Instant::now();
     let mut stream_open = !cli.quiet;

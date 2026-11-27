@@ -138,6 +138,48 @@ Notes:
   exercises two probe types without DNS. Edit it or export your own targets
   from the desktop app.
 
+### Run as a Windows service
+
+A daemon started from a shell dies with the console. `tool/install-headless-service.ps1`
+registers it with the Service Control Manager instead:
+
+```powershell
+# Elevated PowerShell, once.
+pwsh -File tool\install-headless-service.ps1 `
+  -ExePath C:\ProgramData\netstudio\netstudio-headless.exe `
+  -ConfigPath C:\ProgramData\netstudio\targets.json `
+  -LogPath C:\ProgramData\netstudio\headless.log `
+  -Listen 127.0.0.1:9101 `
+  -WatchConfig 60
+```
+
+The script validates the config with `--check` first, registers the service as
+`netstudio-headless` with the command line it prints, sets a restart policy
+(three restarts five seconds apart, then stop), and starts it. `-TokenFile`,
+`-RestartDelaySeconds` and `-DoNotStart` adjust that. Later operations go
+through the same script: `-Action status`, `start`, `stop`, `restart` or
+`uninstall`.
+
+* `--windows-service` makes the process call `StartServiceCtrlDispatcherW` and
+  report `SERVICE_RUNNING` only after the config is validated, the listener is
+  bound and the pid file is claimed, so `sc.exe start` actually waits for a
+  working daemon. Started from a shell it exits `2` with a message explaining
+  that SCM must launch it — it never probes invisibly.
+* A service has **no console**, so pass `-LogPath`: `--log-file` mirrors every
+  line there (rotated to `headless.log.1` at 8 MiB). Without it the diagnostics
+  are lost.
+* There is no `SIGHUP` on Windows, so `-WatchConfig <SECS>` is how a service
+  picks up a re-exported config file. Without it, a config change needs a
+  restart.
+* Stop is graceful: SCM sends `SERVICE_CONTROL_STOP`, which sets the same flag
+  as `Ctrl+C`, so in-flight probes are cancelled and the pid file is removed.
+* `sc.exe queryex netstudio-headless` shows the exit code of the last run
+  (`1066` plus a service-specific code: `2` invalid config, `3` targets down).
+
+Registering a service needs administrator rights, so the registration itself
+is not exercised by the automated tests; the console refusal, the argument
+plumbing and the script logic are.
+
 ## Configuration
 
 Use **Export JSON** in the app (or a hand-written file). Both forms are
@@ -238,6 +280,7 @@ netstudio-headless --config targets.json --interval 15 --probe-concurrency 32 --
 | `--probe-concurrency <N>` | Maximum probes in flight, 1–256 (default 32) |
 | `--watch-config <SECS>` | Reload the config file when it changes, checked every 1–3600 s; daemon only |
 | `--listen <IP:PORT>` | Enable HTTP (disabled by default); daemon only |
+| `--windows-service` | Let the Service Control Manager own the process; daemon only, Windows |
 | `--output <PATH>` | Atomically replace this file with the latest snapshot |
 | `--pid-file <PATH>` | Write the process id while running; daemon only |
 | `--http-token-file <PATH>` | Require a bearer token on every endpoint but `/healthz`; daemon only |
