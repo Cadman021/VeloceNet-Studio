@@ -2,8 +2,8 @@
 
 use std::fmt::Write as _;
 
+use super::{Health, Snapshot};
 use crate::stats::{TargetStats, TargetStatus};
-
 pub fn render(stats: &[TargetStats], version: &str) -> String {
     let mut out = String::with_capacity(4_096);
     let _ = writeln!(
@@ -205,6 +205,83 @@ pub fn render(stats: &[TargetStats], version: &str) -> String {
     }
     out
 }
+/// Families that describe the daemon rather than its targets: uptime, tick
+/// cost and request counts. A dead or wedged prober stops updating these, so
+/// an alert on `absent()` or a stuck `netstudio_ready` catches it.
+pub fn render_daemon(
+    health: &Health,
+    snapshot: &Snapshot,
+    ready: bool,
+    configured: usize,
+) -> String {
+    let mut out = String::with_capacity(1_024);
+    let _ = writeln!(
+        out,
+        "# HELP netstudio_uptime_seconds Seconds since the daemon started."
+    );
+    let _ = writeln!(out, "# TYPE netstudio_uptime_seconds gauge");
+    let _ = writeln!(
+        out,
+        "netstudio_uptime_seconds {:.3}",
+        health.uptime_seconds()
+    );
+
+    let _ = writeln!(
+        out,
+        "# HELP netstudio_ready 1 when /readyz would answer 200, 0 while targets have no sample yet."
+    );
+    let _ = writeln!(out, "# TYPE netstudio_ready gauge");
+    let _ = writeln!(out, "netstudio_ready {}", u8::from(ready));
+
+    let _ = writeln!(
+        out,
+        "# HELP netstudio_targets_configured Targets in the running configuration."
+    );
+    let _ = writeln!(out, "# TYPE netstudio_targets_configured gauge");
+    let _ = writeln!(out, "netstudio_targets_configured {configured}");
+
+    let _ = writeln!(
+        out,
+        "# HELP netstudio_stale_targets Targets whose last sample is older than 2 x interval + timeout."
+    );
+    let _ = writeln!(out, "# TYPE netstudio_stale_targets gauge");
+    let _ = writeln!(out, "netstudio_stale_targets {}", snapshot.summary.stale);
+
+    if let Some(seconds) = health.snapshot_seconds() {
+        let _ = writeln!(
+            out,
+            "# HELP netstudio_last_snapshot_duration_seconds Wall time the engine spent producing the last snapshot."
+        );
+        let _ = writeln!(out, "# TYPE netstudio_last_snapshot_duration_seconds gauge");
+        let _ = writeln!(out, "netstudio_last_snapshot_duration_seconds {seconds:.6}");
+    }
+
+    let (ok, failed) = health.reload_counts();
+    let _ = writeln!(
+        out,
+        "# HELP netstudio_config_reloads_total SIGHUP reload attempts by outcome."
+    );
+    let _ = writeln!(out, "# TYPE netstudio_config_reloads_total counter");
+    let _ = writeln!(out, "netstudio_config_reloads_total{{result=\"ok\"}} {ok}");
+    let _ = writeln!(
+        out,
+        "netstudio_config_reloads_total{{result=\"error\"}} {failed}"
+    );
+
+    let _ = writeln!(
+        out,
+        "# HELP netstudio_http_requests_total HTTP requests served, by path and status."
+    );
+    let _ = writeln!(out, "# TYPE netstudio_http_requests_total counter");
+    for ((path, status), count) in health.http_requests() {
+        let _ = writeln!(
+            out,
+            "netstudio_http_requests_total{{path=\"{}\",status=\"{status}\"}} {count}",
+            escape_label(path)
+        );
+    }
+    out
+}
 
 fn gauge_family(
     out: &mut String,
@@ -307,6 +384,61 @@ mod tests {
     use super::*;
     use crate::stats::TargetMetricTracker;
 
+    #[test]
+    fn daemon_families_report_readiness_uptime_and_request_counts() {
+        let state = crate::headless::State::new(1);
+        let empty = render_daemon(
+            state.health(),
+            &Snapshot::new(state.stats()),
+            state.ready(),
+            state.configured(),
+        );
+        assert!(empty.contains("netstudio_ready 0"), "{empty}");
+        assert!(empty.contains("netstudio_targets_configured 1"), "{empty}");
+        assert!(
+            !empty.contains("netstudio_last_snapshot_duration_seconds"),
+            "{empty}"
+        );
+        assert!(
+            empty.contains("netstudio_config_reloads_total{result=\"ok\"} 0"),
+            "{empty}"
+        );
+
+        state.update(vec![sample()]);
+        state
+            .health()
+            .note_snapshot(std::time::Duration::from_micros(1_500));
+        state.health().note_reload(true);
+        state.health().note_reload(false);
+        state.note_http("/metrics", 200);
+        state.note_http("/metrics", 200);
+        state.note_http("/metrics", 401);
+        let text = render_daemon(
+            state.health(),
+            &Snapshot::new(state.stats()),
+            state.ready(),
+            state.configured(),
+        );
+        assert!(text.contains("netstudio_ready 1"), "{text}");
+        assert!(
+            text.contains("netstudio_last_snapshot_duration_seconds 0.001500"),
+            "{text}"
+        );
+        assert!(text.contains("netstudio_stale_targets 0"), "{text}");
+        assert!(
+            text.contains("netstudio_config_reloads_total{result=\"ok\"} 1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("netstudio_config_reloads_total{result=\"error\"} 1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("netstudio_http_requests_total{path=\"/metrics\",status=\"200\"} 2"),
+            "{text}"
+        );
+        assert!(text.contains("netstudio_uptime_seconds "), "{text}");
+    }
     fn sample() -> TargetStats {
         let mut tracker = TargetMetricTracker::new(
             1,

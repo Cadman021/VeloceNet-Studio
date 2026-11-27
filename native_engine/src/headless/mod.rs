@@ -13,16 +13,16 @@ mod signal;
 mod term;
 mod text;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use crate::engine::{Engine, TargetConfig};
 use crate::stats::{self, TargetStats, TargetStatus};
@@ -117,10 +117,92 @@ impl Snapshot {
     }
 }
 
+/// Cap on distinct (path, status) pairs exported as counters. The routing
+/// table has six paths, so this only matters if the HTTP parser starts
+/// reporting arbitrary paths.
+const MAX_HTTP_SERIES: usize = 32;
+
+/// Facts about the daemon itself, as opposed to the targets it probes:
+/// Prometheus needs these to tell a healthy monitor from a stuck one.
+pub struct Health {
+    started: Instant,
+    snapshot_micros: AtomicU64,
+    snapshot_taken: AtomicBool,
+    reloads_ok: AtomicU64,
+    reloads_failed: AtomicU64,
+    http: Mutex<BTreeMap<(&'static str, u16), u64>>,
+}
+
+impl Health {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            snapshot_micros: AtomicU64::new(0),
+            snapshot_taken: AtomicBool::new(false),
+            reloads_ok: AtomicU64::new(0),
+            reloads_failed: AtomicU64::new(0),
+            http: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub fn uptime_seconds(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
+    /// How long the engine took to produce the last snapshot; None until one
+    /// tick has completed, so a fresh process does not look instantaneously
+    /// fast.
+    pub fn note_snapshot(&self, elapsed: Duration) {
+        let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+        self.snapshot_micros.store(micros, Ordering::Relaxed);
+        self.snapshot_taken.store(true, Ordering::Relaxed);
+    }
+
+    pub fn snapshot_seconds(&self) -> Option<f64> {
+        self.snapshot_taken
+            .load(Ordering::Relaxed)
+            .then(|| self.snapshot_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0)
+    }
+
+    pub fn note_reload(&self, ok: bool) {
+        if ok {
+            self.reloads_ok.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.reloads_failed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn reload_counts(&self) -> (u64, u64) {
+        (
+            self.reloads_ok.load(Ordering::Relaxed),
+            self.reloads_failed.load(Ordering::Relaxed),
+        )
+    }
+
+    pub fn note_http(&self, path: &'static str, status: u16) {
+        let mut map = self.http.lock();
+        let key = if map.contains_key(&(path, status)) || map.len() < MAX_HTTP_SERIES {
+            (path, status)
+        } else {
+            ("other", 0)
+        };
+        *map.entry(key).or_insert(0) += 1;
+    }
+
+    pub fn http_requests(&self) -> Vec<((&'static str, u16), u64)> {
+        self.http
+            .lock()
+            .iter()
+            .map(|(key, count)| (*key, *count))
+            .collect()
+    }
+}
+
 /// State shared by the daemon loop and the HTTP threads.
 pub struct State {
     target_count: AtomicUsize,
     stats: RwLock<Arc<Vec<TargetStats>>>,
+    health: Health,
 }
 
 impl State {
@@ -128,6 +210,7 @@ impl State {
         Arc::new(Self {
             target_count: AtomicUsize::new(target_count),
             stats: RwLock::new(Arc::new(Vec::new())),
+            health: Health::new(),
         })
     }
 
@@ -145,6 +228,19 @@ impl State {
 
     pub fn stats(&self) -> Arc<Vec<TargetStats>> {
         self.stats.read().clone()
+    }
+
+    pub fn health(&self) -> &Health {
+        &self.health
+    }
+
+    /// Counts one served request for `netstudio_http_requests_total`.
+    pub fn note_http(&self, path: &'static str, status: u16) {
+        self.health.note_http(path, status);
+    }
+
+    pub fn configured(&self) -> usize {
+        self.target_count.load(Ordering::Relaxed)
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -531,7 +627,9 @@ fn run_daemon(
     let mut output_error: Option<String> = None;
     while !signal::shutdown_requested() {
         if signal::take_reload_request() {
-            match reload(&engine, &state, cli, config_path, &mut applied) {
+            let outcome = reload(&engine, &state, cli, config_path, &mut applied);
+            state.health().note_reload(outcome.is_ok());
+            match outcome {
                 Ok(count) => log::info(format!(
                     "reloaded {count} target(s) from {}",
                     config_path.display()
@@ -544,7 +642,9 @@ fn run_daemon(
                 refresh_http_token(cli, server);
             }
         }
+        let tick_started = Instant::now();
         let stats = Arc::new(engine.get_metrics_snapshot());
+        state.health().note_snapshot(tick_started.elapsed());
         log_staleness(&mut stale_targets, &stats);
         state.update(Arc::clone(&stats));
         if Instant::now() >= next_emit {

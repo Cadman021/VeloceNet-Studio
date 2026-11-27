@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 
 use super::log;
-use super::{metrics, State, NAME, VERSION};
+use super::{metrics, Snapshot, State, NAME, VERSION};
 
 /// Fixed worker pool: a slow or malicious client can pin at most this many
 /// threads, no matter how many TCP connections are open.
@@ -316,7 +316,21 @@ fn handle_connection(mut stream: TcpStream, state: &State, token: Option<&str>) 
     } else {
         route(path, state)
     };
+    state.note_http(path_label(path), response.status);
     write_response(&mut stream, &response, head_only);
+}
+
+/// Collapses query strings and unknown paths so the request counter keeps a
+/// fixed, tiny label set.
+fn path_label(path: &str) -> &'static str {
+    match path {
+        "/" | "/index.html" => "/",
+        "/healthz" => "/healthz",
+        "/readyz" => "/readyz",
+        "/metrics" => "/metrics",
+        "/api/v1/status" => "/api/v1/status",
+        _ => "other",
+    }
 }
 
 /// Case-insensitive header lookup on the raw request head.
@@ -412,10 +426,20 @@ fn route(path: &str, state: &State) -> Response {
                 Response::text(503, "Service Unavailable", "starting\n".to_string())
             }
         }
-        "/metrics" => Response {
-            content_type: "text/plain; version=0.0.4; charset=utf-8",
-            ..Response::text(200, "OK", metrics::render(&state.stats(), VERSION))
-        },
+        "/metrics" => {
+            let stats = state.stats();
+            let mut body = metrics::render(&stats, VERSION);
+            body.push_str(&metrics::render_daemon(
+                state.health(),
+                &Snapshot::new(stats),
+                state.ready(),
+                state.configured(),
+            ));
+            Response {
+                content_type: "text/plain; version=0.0.4; charset=utf-8",
+                ..Response::text(200, "OK", body)
+            }
+        }
         "/api/v1/status" => Response::json(format!("{}\n", state.snapshot().to_json())),
         _ => Response::text(404, "Not Found", "not found\n".to_string()),
     }
@@ -589,6 +613,18 @@ mod tests {
         let metrics = request(&server, "GET", "/metrics");
         assert!(metrics.contains("netstudio_target_up{id=\"1\""));
         assert!(metrics.contains("# TYPE netstudio_target_status gauge"));
+        assert!(metrics.contains("netstudio_ready 1"), "{metrics}");
+        assert!(
+            metrics.contains("netstudio_targets_configured 1"),
+            "{metrics}"
+        );
+        // The counter is written after the response, so the second scrape
+        // reports the first one.
+        let second = request(&server, "GET", "/metrics");
+        assert!(
+            second.contains("netstudio_http_requests_total{path=\"/metrics\",status=\"200\"} 1"),
+            "{second}"
+        );
         let status = request(&server, "GET", "/api/v1/status");
         let json: serde_json::Value = serde_json::from_str(body(&status)).expect("json");
         assert_eq!(json["schema"], 1);

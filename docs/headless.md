@@ -416,6 +416,13 @@ All target metrics carry the labels
 | Metric | Type | Meaning |
 |---|---|---|
 | `netstudio_build_info` | gauge | Always `1`, labelled with `version` |
+| `netstudio_uptime_seconds` | gauge | Seconds since the daemon started |
+| `netstudio_ready` | gauge | `1` when `/readyz` would answer `200` |
+| `netstudio_targets_configured` | gauge | Targets in the running configuration (changes after `SIGHUP`) |
+| `netstudio_stale_targets` | gauge | Targets whose latest sample is older than `2 × interval + timeout` |
+| `netstudio_last_snapshot_duration_seconds` | gauge | Wall time spent producing the last snapshot; absent before the first tick |
+| `netstudio_config_reloads_total` | counter | `SIGHUP` reload attempts, labelled `result="ok"\|"error"` |
+| `netstudio_http_requests_total` | counter | Served HTTP requests, labelled `path` and `status` |
 | `netstudio_target_info` | gauge | Always `1`; the target exists |
 | `netstudio_target_up` | gauge | `1` if the latest probe answered; absent until the first sample |
 | `netstudio_target_status` | gauge | `0` pending, `1` online, `2` degraded, `3` offline |
@@ -448,6 +455,13 @@ Example alerts:
 - alert: NetStudioProbeStalled
   expr: netstudio_target_stale == 1
   for: 1m
+
+- alert: NetStudioSnapshotFrozen
+  expr: changes(netstudio_last_snapshot_duration_seconds[5m]) == 0 and netstudio_uptime_seconds > 300
+  for: 2m
+
+- alert: NetStudioReloadFailing
+  expr: increase(netstudio_config_reloads_total{result="error"}[15m]) > 0
 
 - alert: NetStudioDNSFailures
   expr: netstudio_target_error_info{kind="dns"} == 1
