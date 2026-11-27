@@ -195,20 +195,40 @@ jobs:
               --output /var/lib/netstudio/status.json
       - name: Serve health, readiness, metrics and the event feed
         run: |
-          cat > smoke.json <<'JSON'
+          # Mount the directory, not the file: Docker turns a missing host path
+          # into an empty directory, and the daemon would then see a directory
+          # where it expects the config.
+          mkdir -p .smoke
+          cat > .smoke/targets.json <<'JSON'
           {"settings":{"offline_after":1,"recover_after":1},
            "targets":[{"id":1,"name":"self","host":"127.0.0.1","port":9101,
                        "protocol":"TCP","interval_ms":500,"timeout_ms":500}]}
           JSON
+          chmod -R a+rX .smoke
+          docker run --rm -v "$PWD/.smoke:/etc/netstudio:ro" netstudio-headless:ci \
+            --check --config /etc/netstudio/targets.json \
+              --listen 0.0.0.0:9101 --output /var/lib/netstudio/status.json
           docker run -d --name daemon -p 19101:9101 \
-            -v "$PWD/smoke.json:/etc/netstudio/targets.json:ro" \
-            netstudio-headless:ci
-          timeout 90 sh -c 'until curl -fsS http://127.0.0.1:19101/readyz; do sleep 1; done'
-          curl -fsS http://127.0.0.1:19101/healthz
-          curl -fsS http://127.0.0.1:19101/metrics | grep -q '^netstudio_targets_configured'
-          curl -fsS http://127.0.0.1:19101/api/v1/events | grep -q '"schema":1'
+            -v "$PWD/.smoke:/etc/netstudio:ro" netstudio-headless:ci
+          for attempt in $(seq 1 20); do
+            status=$(docker inspect -f '{{.State.Status}}' daemon)
+            if [ "$status" = "exited" ] || [ "$status" = "dead" ]; then
+              echo "the daemon did not stay up: $status"
+              docker inspect -f 'exit={{.State.ExitCode}} mounts={{json .Mounts}}' daemon
+              docker logs daemon || true
+              exit 1
+            fi
+            if curl -fsS -o /dev/null http://127.0.0.1:19101/healthz; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:19101/healthz
+          timeout 30 sh -c 'until curl -fsS -o /dev/null http://127.0.0.1:19101/readyz; do sleep 1; done'
+          curl -fsS http://127.0.0.1:19101/metrics | grep -q '^netstudio_targets_configured 1'
+          curl -fsS http://127.0.0.1:19101/metrics | grep -q '^netstudio_target_up{'
+          curl -fsS 'http://127.0.0.1:19101/api/v1/events' | grep -q '"schema":1'
+          curl -fsS -o /dev/null http://127.0.0.1:19101/api/v1/status
           docker exec daemon test -s /var/lib/netstudio/status.json
           docker run --rm --network container:daemon netstudio-headless:ci \
             --health-check http://127.0.0.1:9101/readyz
+          docker logs daemon | tail -n 4
           docker stop daemon
-          docker logs daemon | tail -n 5

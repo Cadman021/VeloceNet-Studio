@@ -62,11 +62,12 @@ netstudio-headless -c targets.json --once --format json \
   | jq -r '.targets[] | "\(.status)\t\(.name)\t\(.last_rtt_ms) ms\t\(.loss_rate)%"'
 ```
 
-Expect the first pass to report `pending` (no sample yet) and then
-`degraded` before `offline`: statuses are edge-triggered by
-`offline_after`/`recover_after`, exactly as in the app, so compare after a
-few intervals, not on the first one. `--once` exits `3` when a non-muted
-target is down, which makes it usable as a cron check.
+Expect the first pass to report `Pending` (no sample yet), then
+`Degraded`, and `Offline` only after `offline_after` misses: statuses are
+edge-triggered exactly as in the app, so compare after a few intervals, not
+on the first one. The JSON carries the enum names (`Pending`, `Online`,
+`Degraded`, `Offline`); the Prometheus gauge carries `0`-`3`. `--once` exits
+`3` when a non-muted target is down, which makes it usable as a cron check.
 
 Muted targets are still probed and still counted, but never alert in either
 UI.

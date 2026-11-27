@@ -10,7 +10,9 @@ pub fn shutdown_requested() -> bool {
 }
 
 /// Used by the Windows service control handler, which is the service-side
-/// equivalent of Ctrl+C.
+/// equivalent of Ctrl+C. Unix gets the same flag from the signal handler, so
+/// the function exists only where something calls it.
+#[cfg(windows)]
 pub fn request_shutdown() {
     SHUTDOWN.store(true, Ordering::Relaxed);
 }
@@ -43,12 +45,17 @@ mod platform {
     pub fn install() -> Result<(), String> {
         let mut failed = false;
         for signal in [libc::SIGINT, libc::SIGTERM] {
-            let previous = unsafe { libc::signal(signal, handle as libc::sighandler_t) };
+            // Through a pointer: casting a function item straight to the
+            // integer sighandler_t is what clippy::function_casts_as_integer
+            // rejects, and the extra hop is the documented spelling.
+            let handler = handle as *const () as libc::sighandler_t;
+            let previous = unsafe { libc::signal(signal, handler) };
             if previous == libc::SIG_ERR {
                 failed = true;
             }
         }
-        let reload = unsafe { libc::signal(libc::SIGHUP, handle_reload as libc::sighandler_t) };
+        let reload_handler = handle_reload as *const () as libc::sighandler_t;
+        let reload = unsafe { libc::signal(libc::SIGHUP, reload_handler) };
         if reload == libc::SIG_ERR {
             failed = true;
         }
