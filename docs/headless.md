@@ -167,8 +167,10 @@ accepted:
 }
 ```
 
-`protocol` accepts `ICMP` / `TCP` / `HTTP` / `HTTPS` (or `0`–`3`). Missing
-fields use the same defaults as the app: ICMP, port 80, 1000 ms interval,
+`protocol` accepts `ICMP` / `TCP` / `HTTP` / `HTTPS` (or `0`–`3`); anything
+else — including a typo such as `"HTTTP"` — skips that target with a warning
+instead of silently probing ICMP. Missing fields use the same defaults as the
+app: ICMP, port 80, 1000 ms interval,
 1500 ms timeout. Values are clamped instead of rejected: interval
 200–60000 ms, timeout 100–10000 ms, thresholds 1–20. Up to 500 targets are
 loaded.
@@ -181,6 +183,14 @@ skipped. Invalid hosts (spaces, bad labels, octets above 255, malformed
 IPv6) are skipped with a warning; one bad target never prevents the rest from
 running. Structural JSON errors and a file with zero usable targets are
 fatal (`exit 2`).
+
+Keys the loader does not read are reported (`config: unknown key "porrt" is
+ignored`), and two targets that probe the same `protocol host:port` are
+flagged as duplicates: both still probe, but their rows are indistinguishable
+on a dashboard. [`netstudio-headless.schema.json`](netstudio-headless.schema.json)
+is the authoritative key list with types and ranges; add
+`"$schema": "./docs/netstudio-headless.schema.json"` to a hand-written file
+to get completion and inline errors in VS Code.
 
 Duplicate or missing `id` values are assigned fresh ids so Prometheus labels
 and snapshots stay stable within a run. `group` (capped at 40 characters) and

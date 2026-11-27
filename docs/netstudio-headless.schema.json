@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Cadman021/VeloceNet-Studio/docs/netstudio-headless.schema.json",
+  "title": "NetStudio headless target file",
+  "description": "Target list read by netstudio-headless --config. The app writes the envelope; a bare array of target objects is also accepted. Keys not listed here are ignored with a warning at startup, so this file is the reference for what actually takes effect.",
+  "oneOf": [
+    { "$ref": "#/definitions/envelope" },
+    {
+      "type": "array",
+      "items": { "$ref": "#/definitions/target" },
+      "maxItems": 500
+    }
+  ],
+  "definitions": {
+    "envelope": {
+      "type": "object",
+      "required": ["targets"],
+      "properties": {
+        "$schema": { "type": "string" },
+        "app": { "const": "velocenet-studio" },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1,
+          "description": "Envelope version. A larger value is accepted with a warning so an older binary can still read a newer export."
+        },
+        "exported_at": { "type": "string", "format": "date-time" },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "offline_after": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+            "recover_after": { "type": "integer", "minimum": 1, "maximum": 20, "default": 2 }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/definitions/target" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "required": ["host"],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Stable identity used to diff a reload. Missing or duplicate ids get a fresh one; the daemon never rejects a target over it."
+        },
+        "name": { "type": "string", "maxLength": 128 },
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "description": "Hostname, IPv4 or [IPv6]. A pasted URL loses its scheme and becomes the host."
+        },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 80 },
+        "protocol": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0, "maximum": 3 },
+            { "type": "string", "enum": ["ICMP", "TCP", "HTTP", "HTTPS", "icmp", "tcp", "http", "https", "0", "1", "2", "3"] }
+          ],
+          "default": "ICMP",
+          "description": "0/ICMP, 1/TCP, 2/HTTP, 3/HTTPS. Any other value skips the target instead of silently probing ICMP."
+        },
+        "http_path": { "type": "string", "maxLength": 256, "description": "HTTP(S) only; a missing leading slash is added." },
+        "interval_ms": { "type": "integer", "minimum": 200, "maximum": 60000, "default": 1000 },
+        "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 10000, "default": 1500 },
+        "is_enabled": { "type": "boolean", "default": true },
+        "is_muted": { "type": "boolean", "default": false },
+        "muted": {
+          "type": "boolean",
+          "description": "Alias for is_muted, for hand-written files."
+        },
+        "group": { "type": "string", "maxLength": 40 },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 24 },
+          "description": "Written by the app and preserved on import; the headless engine ignores tags."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -4,12 +4,40 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::engine::TargetConfig;
 use crate::probe::ProbeProtocol;
 
 const MAX_TARGETS: usize = 500;
+/// Every key the loader understands. Anything else is a typo far more often
+/// than an extension (`"porrt": 8080` used to be ignored in silence), so it
+/// is reported. `docs/netstudio-headless.schema.json` lists the same keys;
+/// a test keeps the two in step.
+const ROOT_KEYS: &[&str] = &[
+    "app",
+    "version",
+    "exported_at",
+    "settings",
+    "targets",
+    "$schema",
+];
+const SETTINGS_KEYS: &[&str] = &["offline_after", "recover_after"];
+const TARGET_KEYS: &[&str] = &[
+    "id",
+    "name",
+    "host",
+    "port",
+    "protocol",
+    "http_path",
+    "interval_ms",
+    "timeout_ms",
+    "is_enabled",
+    "is_muted",
+    "muted",
+    "group",
+    "tags",
+];
 const MAX_CONFIG_BYTES: u64 = 16 * 1024 * 1024;
 /// Mirrors PingTarget.maxGroupLength in the app so both cap identically.
 const MAX_GROUP_CHARS: usize = 40;
@@ -52,7 +80,7 @@ pub(crate) fn parse(raw: &str) -> Result<LoadedConfig, String> {
     let mut used_ids = HashSet::new();
     let mut next_id = 1u32;
     for (index, entry) in entries.iter().take(MAX_TARGETS).enumerate() {
-        match parse_target(entry) {
+        match parse_target(entry, &mut warnings) {
             Ok(Some(mut target)) => {
                 let assigned = if target.id > 0 && used_ids.insert(target.id) {
                     target.id
@@ -76,6 +104,24 @@ pub(crate) fn parse(raw: &str) -> Result<LoadedConfig, String> {
             }
             Ok(None) => warnings.push(format!("target #{} is disabled; skipped", index + 1)),
             Err(reason) => warnings.push(format!("target #{} skipped: {reason}", index + 1)),
+        }
+    }
+
+    // Two entries that probe the same endpoint are almost always a copy-paste
+    // slip, and their two rows are indistinguishable on a dashboard.
+    let mut endpoints: std::collections::HashMap<String, &str> = Default::default();
+    for target in &targets {
+        let key = format!(
+            "{} {}:{}",
+            target.protocol.as_str(),
+            target.host.to_ascii_lowercase(),
+            target.port
+        );
+        if let Some(first) = endpoints.insert(key.clone(), &target.name) {
+            warnings.push(format!(
+                "targets {first:?} and {:?} probe the same endpoint {key}; their results are duplicates",
+                target.name
+            ));
         }
     }
 
@@ -107,6 +153,10 @@ fn split_root(
                         "config schema version {version} is newer than supported version 1"
                     ));
                 }
+            }
+            report_unknown_keys(&map, ROOT_KEYS, "config", warnings);
+            if let Some(Value::Object(settings)) = map.get("settings") {
+                report_unknown_keys(settings, SETTINGS_KEYS, "settings", warnings);
             }
             let entries = match map.remove("targets") {
                 Some(Value::Array(entries)) => entries,
@@ -142,8 +192,9 @@ fn thresholds(settings: Option<&Value>, warnings: &mut Vec<String>) -> (u32, u32
     (offline, recover)
 }
 
-fn parse_target(entry: &Value) -> Result<Option<TargetConfig>, String> {
+fn parse_target(entry: &Value, warnings: &mut Vec<String>) -> Result<Option<TargetConfig>, String> {
     let map = entry.as_object().ok_or("target is not a JSON object")?;
+    report_unknown_keys(map, TARGET_KEYS, "target", warnings);
     let enabled = match map.get("is_enabled") {
         Some(Value::Bool(value)) => *value,
         None | Some(Value::Null) => true,
@@ -166,7 +217,7 @@ fn parse_target(entry: &Value) -> Result<Option<TargetConfig>, String> {
             port as u16
         }
     };
-    let protocol = parse_protocol(map.get("protocol"));
+    let protocol = parse_protocol(map.get("protocol"))?;
     let http_path = if matches!(protocol, ProbeProtocol::Http | ProbeProtocol::Https) {
         sanitize_http_path(map.get("http_path").and_then(Value::as_str).unwrap_or(""))
     } else {
@@ -221,16 +272,41 @@ fn clamped(value: Option<&Value>, fallback: u64, min: u64, max: u64) -> u64 {
     }
 }
 
-fn parse_protocol(value: Option<&Value>) -> ProbeProtocol {
+/// A value the probe cannot run is a config error, not a silent fallback:
+/// `"protocol": "HTTTP"` used to probe ICMP while the operator believed TLS
+/// was being measured.
+fn parse_protocol(value: Option<&Value>) -> Result<ProbeProtocol, String> {
+    const EXPECTED: &str = "ICMP, TCP, HTTP or HTTPS (or 0-3)";
     match value {
-        Some(Value::Number(number)) => ProbeProtocol::from_u32(number.as_u64().unwrap_or(0) as u32),
+        None | Some(Value::Null) => Ok(ProbeProtocol::Icmp),
+        Some(Value::Number(number)) => {
+            let id = number
+                .as_u64()
+                .filter(|id| *id <= 3)
+                .ok_or_else(|| format!("unknown protocol {number}; expected {EXPECTED}"))?;
+            Ok(ProbeProtocol::from_u32(id as u32))
+        }
         Some(Value::String(text)) => match text.trim().to_ascii_uppercase().as_str() {
-            "TCP" | "1" => ProbeProtocol::Tcp,
-            "HTTP" | "2" => ProbeProtocol::Http,
-            "HTTPS" | "3" => ProbeProtocol::Https,
-            _ => ProbeProtocol::Icmp,
+            "" | "ICMP" | "0" => Ok(ProbeProtocol::Icmp),
+            "TCP" | "1" => Ok(ProbeProtocol::Tcp),
+            "HTTP" | "2" => Ok(ProbeProtocol::Http),
+            "HTTPS" | "3" => Ok(ProbeProtocol::Https),
+            other => Err(format!("unknown protocol {other:?}; expected {EXPECTED}")),
         },
-        _ => ProbeProtocol::Icmp,
+        Some(_) => Err("protocol must be a string or a number".to_string()),
+    }
+}
+
+fn report_unknown_keys(
+    map: &Map<String, Value>,
+    known: &[&str],
+    context: &str,
+    warnings: &mut Vec<String>,
+) {
+    for key in map.keys() {
+        if !known.contains(&key.as_str()) {
+            warnings.push(format!("{context}: unknown key {key:?} is ignored"));
+        }
     }
 }
 
@@ -343,6 +419,123 @@ mod tests {
         assert_eq!(target.timeout_ms, 1_500);
         assert_eq!(target.http_path, "");
         assert_eq!(target.name, "1.1.1.1");
+    }
+
+    #[test]
+    fn unknown_keys_and_protocol_typos_are_reported() {
+        let loaded = parse(
+            r#"{
+                "app": "velocenet-studio",
+                "version": 1,
+                "exported_at": "2026-01-01T00:00:00Z",
+                "porrt": 8080,
+                "settings": { "offline_after": 2, "recover_after": 2, "offline": 4 },
+                "targets": [
+                    { "id": 1, "name": "ok", "host": "1.1.1.1", "protocol": "TCP" }
+                ]
+            }"#,
+        )
+        .expect("parse");
+        assert_eq!(loaded.targets.len(), 1);
+        let warnings = loaded.warnings.join("\n");
+        assert!(
+            warnings.contains("config: unknown key \"porrt\""),
+            "{warnings}"
+        );
+        assert!(
+            warnings.contains("settings: unknown key \"offline\""),
+            "{warnings}"
+        );
+
+        let loaded =
+            parse(r#"{ "targets": [ { "id": 1, "host": "1.1.1.1", "protocol": "HTTTP" } ] }"#)
+                .expect("parse");
+        // The typo skips the target instead of silently probing ICMP.
+        assert!(loaded.targets.is_empty());
+        assert!(
+            loaded.warnings[0].contains("unknown protocol \"HTTTP\""),
+            "{:?}",
+            loaded.warnings
+        );
+
+        let loaded = parse(r#"{ "targets": [ { "id": 1, "host": "1.1.1.1", "protocol": 9 } ] }"#)
+            .expect("parse");
+        assert!(loaded.targets.is_empty());
+        assert!(
+            loaded.warnings[0].contains("unknown protocol 9"),
+            "{:?}",
+            loaded.warnings
+        );
+    }
+
+    #[test]
+    fn duplicate_endpoints_are_reported_once() {
+        let loaded = parse(
+            r#"{ "targets": [
+                { "id": 1, "name": "dns-a", "host": "1.1.1.1", "port": 53, "protocol": "TCP" },
+                { "id": 2, "name": "dns-b", "host": "1.1.1.1", "port": 53, "protocol": "TCP" },
+                { "id": 3, "name": "dns-icmp", "host": "1.1.1.1", "port": 53, "protocol": "ICMP" }
+            ] }"#,
+        )
+        .expect("parse");
+        assert_eq!(loaded.targets.len(), 3);
+        let duplicates: Vec<&String> = loaded
+            .warnings
+            .iter()
+            .filter(|warning| warning.contains("same endpoint"))
+            .collect();
+        assert_eq!(duplicates.len(), 1, "{:?}", loaded.warnings);
+        assert!(duplicates[0].contains("\"dns-a\""), "{}", duplicates[0]);
+        assert!(duplicates[0].contains("\"dns-b\""), "{}", duplicates[0]);
+        assert!(
+            duplicates[0].contains("TCP 1.1.1.1:53"),
+            "{}",
+            duplicates[0]
+        );
+    }
+
+    #[test]
+    fn schema_lists_exactly_the_keys_the_loader_reads() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/netstudio-headless.schema.json"))
+                .expect("schema is valid JSON");
+        let keys = |path: &[&str]| -> Vec<String> {
+            let mut node = &schema;
+            for step in path {
+                node = &node[*step];
+            }
+            let mut names: Vec<String> = node
+                .as_object()
+                .unwrap_or_else(|| panic!("{path:?} is not an object"))
+                .keys()
+                .cloned()
+                .collect();
+            names.sort();
+            names
+        };
+        let expected = |known: &[&str]| {
+            let mut names: Vec<String> = known.iter().map(|key| key.to_string()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            keys(&["definitions", "target", "properties"]),
+            expected(TARGET_KEYS)
+        );
+        assert_eq!(
+            keys(&["definitions", "envelope", "properties"]),
+            expected(ROOT_KEYS)
+        );
+        assert_eq!(
+            keys(&[
+                "definitions",
+                "envelope",
+                "properties",
+                "settings",
+                "properties"
+            ]),
+            expected(SETTINGS_KEYS)
+        );
     }
 
     #[test]

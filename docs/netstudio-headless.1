@@ -130,7 +130,12 @@ finished with at least one non-muted target down.
 .SH FILES
 .TP
 .I /etc/netstudio/targets.json
-Common location for the target file in deployments.
+Common location for the target file in deployments. Its keys, types and
+ranges are described by
+.IR docs/netstudio-headless.schema.json ;
+an unknown key is reported and ignored, and an unknown
+.B protocol
+skips the target rather than falling back to ICMP.
 .SH EXAMPLES
 .TP
 netstudio-headless \-c targets.json \-\-check
