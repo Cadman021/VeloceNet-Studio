@@ -476,7 +476,7 @@ fn run_daemon(
                      bind to 127.0.0.1 and put a TLS reverse proxy in front, or restrict access at the firewall"
                 ));
             }
-            match http::Server::spawn(address, state.clone(), token.clone()) {
+            match http::Server::spawn(address, state.clone(), token) {
                 Ok(server) => Some(server),
                 Err(error) => {
                     log::error(format!("cannot listen on {address}: {error}"));
@@ -540,6 +540,9 @@ fn run_daemon(
                     "reload failed, keeping the running configuration: {error}"
                 )),
             }
+            if let Some(server) = &server {
+                refresh_http_token(cli, server);
+            }
         }
         let stats = Arc::new(engine.get_metrics_snapshot());
         log_staleness(&mut stale_targets, &stats);
@@ -587,6 +590,27 @@ fn run_daemon(
     drop(pid_file);
     log::info("stopped");
     EXIT_OK
+}
+
+/// SIGHUP also rotates the bearer token. A missing, empty or unreadable
+/// source must never weaken a running endpoint, so the previous token stays
+/// in place and the failure is logged.
+fn refresh_http_token(cli: &cli::Cli, server: &http::Server) {
+    match http_token(cli) {
+        Ok(Some(token)) => {
+            let rotated = server.token().as_deref() != Some(token.as_ref());
+            server.set_token(Some(token));
+            if rotated {
+                log::info("HTTP bearer token rotated");
+            }
+        }
+        Ok(None) => {
+            if server.token().is_some() {
+                log::warn("the HTTP token source is gone; keeping the previous token");
+            }
+        }
+        Err(error) => log::warn(format!("keeping the previous HTTP token: {error}")),
+    }
 }
 
 /// Longest accepted HTTP token; long secrets are pointless and would only
@@ -976,6 +1000,46 @@ mod tests {
             std::env::temp_dir().join(format!("netstudio-headless-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("temp dir");
         directory
+    }
+
+    #[test]
+    fn rotating_the_http_token_keeps_the_old_secret_when_the_file_is_unusable() {
+        let dir = temp_dir("token-rotate");
+        let token_path = dir.join("token");
+        fs::write(&token_path, "one\n").expect("token");
+        let cli = cli::parse(&[
+            "-c".to_string(),
+            "targets.json".to_string(),
+            "--listen".to_string(),
+            "127.0.0.1:0".to_string(),
+            "--http-token-file".to_string(),
+            token_path.display().to_string(),
+        ])
+        .expect("cli");
+        let server = http::Server::spawn(
+            "127.0.0.1:0".parse().expect("addr"),
+            State::new(1),
+            http_token(&cli).expect("token"),
+        )
+        .expect("spawn");
+        assert_eq!(server.token().as_deref(), Some("one"));
+
+        fs::write(&token_path, "two\n").expect("rotate");
+        refresh_http_token(&cli, &server);
+        assert_eq!(server.token().as_deref(), Some("two"));
+
+        // An empty file and a deleted file both fail to load: the running
+        // secret must survive instead of silently opening the endpoint.
+        fs::write(&token_path, "").expect("blank");
+        refresh_http_token(&cli, &server);
+        assert_eq!(server.token().as_deref(), Some("two"));
+
+        fs::remove_file(&token_path).expect("remove");
+        refresh_http_token(&cli, &server);
+        assert_eq!(server.token().as_deref(), Some("two"));
+
+        drop(server);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

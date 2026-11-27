@@ -875,4 +875,107 @@ fn daemon_reloads_targets_on_sighup_and_survives_a_broken_file() {
 }
 
 #[cfg(unix)]
+#[test]
+fn daemon_rotates_the_http_token_on_sighup_and_keeps_it_when_the_file_is_bad() {
+    use std::net::TcpStream;
+    use std::time::{Duration, Instant};
+
+    let http_port = {
+        let probe = TcpListener::bind("127.0.0.1:0").expect("bind http");
+        probe.local_addr().expect("addr").port()
+    };
+    let dir = temp_dir();
+    let config = write_config(
+        &dir,
+        serde_json::json!({
+            "id": 1,
+            "name": "closed",
+            "host": "127.0.0.1",
+            "port": 9,
+            "protocol": "TCP",
+            "interval_ms": 500,
+            "timeout_ms": 500
+        }),
+    );
+    let token_path = dir.join("token");
+    fs::write(&token_path, "one\n").expect("write token");
+    let listen = format!("127.0.0.1:{http_port}");
+    let mut child = Command::new(binary())
+        .args([
+            "--config".as_ref(),
+            config.as_os_str(),
+            "--listen".as_ref(),
+            std::ffi::OsStr::new(&listen),
+            "--http-token-file".as_ref(),
+            token_path.as_os_str(),
+            "--quiet".as_ref(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if TcpStream::connect(("127.0.0.1", http_port)).is_ok() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let with = |token: &str| {
+        http_get_with(
+            http_port,
+            "/metrics",
+            &format!("Authorization: Bearer {token}\r\n"),
+        )
+        .expect("metrics")
+    };
+    assert!(with("one").starts_with("HTTP/1.1 200"));
+
+    // Rotate: the new secret works and the old one is refused, with no restart.
+    fs::write(&token_path, "two\n").expect("rotate token");
+    let status = Command::new("kill")
+        .args(["-HUP", &child.id().to_string()])
+        .status()
+        .expect("send SIGHUP");
+    assert!(status.success(), "kill -HUP failed");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline && !with("two").starts_with("HTTP/1.1 200") {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        with("two").starts_with("HTTP/1.1 200"),
+        "new token rejected"
+    );
+    assert!(
+        with("one").starts_with("HTTP/1.1 401"),
+        "old token still valid"
+    );
+
+    // An empty file must not silently drop authentication.
+    fs::write(&token_path, "").expect("blank token");
+    let status = Command::new("kill")
+        .args(["-HUP", &child.id().to_string()])
+        .status()
+        .expect("send second SIGHUP");
+    assert!(status.success());
+    thread::sleep(Duration::from_millis(1_000));
+    assert!(with("two").starts_with("HTTP/1.1 200"), "token was dropped");
+    assert!(http_get(http_port, "/metrics")
+        .expect("anonymous")
+        .starts_with("HTTP/1.1 401"));
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let mut log = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = std::io::Read::read_to_string(&mut stderr, &mut log);
+    }
+    assert!(log.contains("HTTP bearer token rotated"), "{log}");
+    assert!(log.contains("keeping the previous HTTP token"), "{log}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
 fn _unix_only_marker() {}

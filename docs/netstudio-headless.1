@@ -97,6 +97,16 @@ is not given.
 .B NO_COLOR
 Disable ANSI colour, like
 .BR "\-\-color never" .
+.SH SIGNALS
+.TP
+.B SIGHUP
+Reload the config file and re-read
+.B \-\-http\-token\-file
+without a restart (Unix).
+.TP
+.B SIGINT ", " SIGTERM
+Graceful stop: cancel probes, close the HTTP listener and remove the pid
+file. On Windows, console Ctrl+C does the same.
 .SH EXIT STATUS
 .TP
 .B 0

@@ -324,8 +324,13 @@ every scrape.
   unchanged targets keep their history. Alert thresholds (`settings`) apply
   immediately, and `/readyz` expects the new target count. A file that does not
   parse is logged as an error and the running configuration stays in place, so
-  a bad edit never takes the daemon down. Windows has no equivalent signal:
-  restart the process there.
+  a bad edit never takes the daemon down. The same `SIGHUP` also re-reads
+  `--http-token-file`, so a secret can be rotated without a restart: the new
+  token applies to the next connection and the old one is refused at once. A
+  file that is missing, empty or invalid keeps the previous token in force and
+  is logged as a warning, so a broken mount can never leave the endpoint
+  unauthenticated. Windows has no equivalent signal: restart the process
+  there.
 * Logs go to stderr as `TIMESTAMP LEVEL message`; stdout is reserved for
   snapshots. With `--log-format json` each line is
   `{"time":"…","level":"warn","msg":"…"}` and never contains ANSI colour, so
@@ -380,7 +385,9 @@ except `/healthz` then requires `Authorization: Bearer <token>` and answers
 `401` with `WWW-Authenticate: Bearer` otherwise; `/healthz` stays open because
 container and systemd probes usually cannot send headers. The comparison is
 constant-time, tokens are capped at 256 characters, and `--check` fails if the
-file is missing or empty.
+file is missing or empty. On Unix, `SIGHUP` re-reads the file, so the secret can
+be rotated without a restart; an unreadable or empty file keeps the previous
+token and only logs a warning.
 Binding to a non-loopback address logs an explicit warning at startup, because
 anyone who can reach the port can read target names, hosts, and errors.
 Network access should be restricted by the firewall or the proxy.

@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use parking_lot::RwLock;
+
 use super::log;
 use super::{metrics, State, NAME, VERSION};
 
@@ -53,11 +55,15 @@ impl Response {
     }
 }
 
+/// Shared so SIGHUP can rotate the token without restarting the daemon.
+pub type SharedToken = Arc<RwLock<Option<Arc<str>>>>;
+
 pub struct Server {
     addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
     accept_handle: Option<thread::JoinHandle<()>>,
     workers: Vec<thread::JoinHandle<()>>,
+    token: SharedToken,
     sender: Option<SyncSender<TcpStream>>,
 }
 
@@ -74,6 +80,7 @@ impl Server {
         listener.set_nonblocking(true)?;
         let local = listener.local_addr()?;
         let shutdown = Arc::new(AtomicBool::new(false));
+        let token: SharedToken = Arc::new(RwLock::new(token));
         let (sender, receiver) = mpsc::sync_channel::<TcpStream>(HTTP_QUEUE_DEPTH);
         let receiver = Arc::new(Mutex::new(receiver));
 
@@ -124,12 +131,25 @@ impl Server {
             shutdown,
             accept_handle: Some(accept_handle),
             workers,
+            token,
             sender: Some(sender),
         })
     }
 
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// The token new connections must present, or None when the endpoint is
+    /// unauthenticated.
+    pub fn token(&self) -> Option<Arc<str>> {
+        self.token.read().clone()
+    }
+
+    /// Swaps the token new connections must present. A request already being
+    /// served keeps the token it was admitted with.
+    pub fn set_token(&self, token: Option<Arc<str>>) {
+        *self.token.write() = token;
     }
 
     pub fn stop(&mut self) {
@@ -188,7 +208,7 @@ fn worker_loop(
     receiver: Arc<Mutex<mpsc::Receiver<TcpStream>>>,
     state: Arc<State>,
     shutdown: Arc<AtomicBool>,
-    token: Option<Arc<str>>,
+    token: SharedToken,
 ) {
     loop {
         if shutdown.load(Ordering::Relaxed) {
@@ -201,7 +221,12 @@ fn worker_loop(
             receiver.recv_timeout(Duration::from_millis(200))
         };
         match job {
-            Ok(stream) => handle_connection(stream, &state, token.as_deref()),
+            Ok(stream) => {
+                // Cloned out of the lock before the request is read so a
+                // rotation during a slow request cannot deadlock or tear.
+                let expected = token.read().clone();
+                handle_connection(stream, &state, expected.as_deref())
+            }
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         }
@@ -522,6 +547,25 @@ mod tests {
         // Liveness probes cannot send headers, readiness must be guarded.
         assert!(request(&server, "GET", "/healthz").starts_with("HTTP/1.1 200"));
         assert!(request(&server, "GET", "/readyz").starts_with("HTTP/1.1 401"));
+    }
+
+    #[test]
+    fn rotating_the_token_takes_effect_without_a_restart() {
+        let server = start_with_token(state_with_sample(), Some("one"));
+
+        let first = request_with_header(&server, "/metrics", "Authorization: Bearer one\r\n");
+        assert!(first.starts_with("HTTP/1.1 200"), "{first}");
+
+        server.set_token(Some(Arc::from("two")));
+        let stale = request_with_header(&server, "/metrics", "Authorization: Bearer one\r\n");
+        assert!(stale.starts_with("HTTP/1.1 401"), "{stale}");
+        let fresh = request_with_header(&server, "/metrics", "Authorization: Bearer two\r\n");
+        assert!(fresh.starts_with("HTTP/1.1 200"), "{fresh}");
+
+        // Removing the token reopens the endpoint; the daemon only does this
+        // when asked to, and logs it.
+        server.set_token(None);
+        assert!(request(&server, "GET", "/metrics").starts_with("HTTP/1.1 200"));
     }
 
     #[test]
