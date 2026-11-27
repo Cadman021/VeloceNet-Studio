@@ -204,6 +204,13 @@ jobs:
   # glibc refuses to start on an older distribution. glibc 2.31 is the floor
   # declared in deploy/linux/build-package.sh, which keeps the same .deb and
   # .rpm usable on Debian 11-13, Ubuntu 20.04+ and RHEL 9+.
+  #
+  # bullseye is archived: deb.debian.org still serves the suite indexes, but
+  # the package files themselves now live only on archive.debian.org, so a
+  # plain `apt-get install` resolves current versions and then 404s every one
+  # of them (that is what failed the 2.0.0 release run at this step). Point apt
+  # at the archive before installing anything, and keep the container: it is
+  # what gives the packages their glibc 2.31 floor.
   build-linux-packages:
     name: Build Linux packages (.deb, .rpm, SBOM)
     runs-on: ubuntu-latest
@@ -213,7 +220,9 @@ jobs:
 
       - name: Install packaging tools
         run: |
-          apt-get update -y
+          printf 'deb http://archive.debian.org/debian bullseye main\ndeb http://archive.debian.org/debian-security bullseye-security main\n' > /etc/apt/sources.list
+          rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+          apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 update -y
           apt-get install -y --no-install-recommends \
             build-essential ca-certificates curl git pkg-config python3 rpm systemd xz-utils
 

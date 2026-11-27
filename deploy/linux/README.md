@@ -36,6 +36,12 @@ The release job therefore runs inside `debian:bullseye` (glibc 2.31), which
 keeps a single build usable on Debian 11-13, Ubuntu 20.04+ and RHEL 9+;
 `--glibc-min` writes the matching `Depends` line into the `.deb`.
 
+`bullseye` itself has moved to `archive.debian.org`: the suite indexes still
+come from `deb.debian.org`, but the package files only exist in the archive, so
+a fresh `debian:bullseye` container must point apt there (with
+`Acquire::Check-Valid-Until=false`) before installing the packaging tools. The
+release job does this in `.github/workflows/release.yml`.
+
 Both packages install the same architecture: `--arch amd64` (default) or
 `--arch arm64`.
 
