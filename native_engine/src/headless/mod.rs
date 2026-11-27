@@ -6,6 +6,7 @@
 
 mod cli;
 mod config;
+mod events;
 mod healthcheck;
 mod http;
 mod log;
@@ -205,6 +206,7 @@ impl Health {
 pub struct State {
     target_count: AtomicUsize,
     stats: RwLock<Arc<Vec<TargetStats>>>,
+    events: events::EventLog,
     health: Health,
 }
 
@@ -213,6 +215,7 @@ impl State {
         Arc::new(Self {
             target_count: AtomicUsize::new(target_count),
             stats: RwLock::new(Arc::new(Vec::new())),
+            events: events::EventLog::new(),
             health: Health::new(),
         })
     }
@@ -231,6 +234,15 @@ impl State {
 
     pub fn stats(&self) -> Arc<Vec<TargetStats>> {
         self.stats.read().clone()
+    }
+
+    /// Alert feed shared with the HTTP layer; the daemon loop appends to it.
+    pub fn event_log(&self) -> &events::EventLog {
+        &self.events
+    }
+
+    pub fn event_page(&self, since: u64) -> events::Page {
+        self.events.page(since)
     }
 
     pub fn health(&self) -> &Health {
@@ -678,6 +690,9 @@ fn run_daemon(
     let mut next_emit = Instant::now();
     let mut stream_open = !cli.quiet;
     let mut stale_targets = HashSet::new();
+    // State transitions are edge-triggered: the feed must see the new
+    // snapshot once, not once per 250ms loop iteration.
+    let mut transitions = events::Tracker::new();
     // Log an output failure once, not once per interval, and announce the
     // recovery: the same message every second buries everything else.
     let mut output_error: Option<String> = None;
@@ -722,6 +737,24 @@ fn run_daemon(
         let stats = Arc::new(engine.get_metrics_snapshot());
         state.health().note_snapshot(tick_started.elapsed());
         log_staleness(&mut stale_targets, &stats);
+        for event in transitions.observe(&stats, state.event_log(), log::now_epoch_ms()) {
+            match event.kind {
+                "down" => log::warn(format!(
+                    "{} ({} {}) is down: {}",
+                    event.name,
+                    event.protocol,
+                    event.host,
+                    event.error.as_deref().unwrap_or("no response")
+                )),
+                _ => log::info(format!(
+                    "{} ({} {}) recovered after {:.1}s",
+                    event.name,
+                    event.protocol,
+                    event.host,
+                    event.outage_ms.unwrap_or(0) as f64 / 1000.0
+                )),
+            }
+        }
         state.update(Arc::clone(&stats));
         if Instant::now() >= next_emit {
             let snapshot = Snapshot::new(stats);

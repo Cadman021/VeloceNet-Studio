@@ -550,6 +550,7 @@ Network access should be restricted by the firewall or the proxy.
 | `/readyz` | `200 ready` once every target has at least one sample; `503 starting` before |
 | `/metrics` | Prometheus text format |
 | `/api/v1/status` | The latest snapshot as JSON |
+| `/api/v1/events?since=<seq>` | Alert feed: `down`/`up` transitions after `seq` as JSON |
 
 Only `GET` and `HEAD` are allowed (`405` otherwise). Unknown paths return
 `404`. The request line and headers are capped at 8 KiB: oversized requests
@@ -630,8 +631,58 @@ cardinality and may contain attacker-controlled text. Use
 message from `/api/v1/status` or the snapshot file.
 
 Note that the engine has no persistence: counters and the 40-sample RTT
-window reset when the process restarts. Uptime history and the alert log
-remain desktop-app features.
+window reset when the process restarts. Uptime history and the 30-day alert
+log remain desktop-app features; the daemon keeps only the recent
+transitions, as the feed below shows.
+
+### Alerting (push webhooks)
+
+Pull alerting is the recommended path: scrape `/metrics` with Prometheus and
+let Alertmanager decide, using the rules above. The daemon does not post
+webhooks itself — it has no TLS client or certificate store, and every real
+receiver (Slack, Teams, ntfy, Telegram) is HTTPS-only. Adding one would mean
+new dependencies and a trust store to keep patched, for something the event
+feed covers in a small sidecar.
+
+That feed is the daemon's alert log: a target that crosses into `Offline`
+(per `offline_after`) and back out (per `recover_after`) produces one event,
+with a monotonic `seq` the client passes back as `?since=`:
+
+```bash
+curl -s "http://127.0.0.1:9101/api/v1/events?since=0" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"schema":1,"seq":7,"dropped":0,"events":[
+  {"seq":7,"at_ms":1730812345678,"target_id":1,"name":"API",
+   "host":"api.example.com","protocol":"HTTPS","kind":"down",
+   "error":"connect timed out","error_kind":"timeout","outage_ms":null}
+]}
+```
+
+`kind` is `down`, or `up` with `outage_ms` telling how long the target was
+offline. Muted targets never appear, `dropped` reports how many transitions
+the 256-event ring buffer evicted before your cursor (so a client knows it
+missed some instead of silently resuming), and the feed sits behind the same
+bearer token as `/api/v1/status`. Every transition is also logged, so
+`journalctl -u netstudio-headless | grep 'is down'` tells the same story.
+
+`deploy/alerting/netstudio-alert-bridge.py` polls that feed and posts to any
+number of webhooks with TLS, retries and a cursor that survives restarts:
+
+```bash
+python3 deploy/alerting/netstudio-alert-bridge.py \
+  --url http://127.0.0.1:9101 --token-file /etc/netstudio/http.token \
+  --webhook https://hooks.slack.com/services/T000/B000/XXXX \
+  --state-file /var/lib/netstudio/alert-bridge.json
+```
+
+`--format json` (the default) sends `{"text": "...", "event": {...}}`, which
+Slack and Mattermost accept as-is; `--format text` sends the bare message for
+ntfy. `--dry-run` prints instead of sending and `--once` processes one batch,
+so the whole path can be tried before wiring a unit. See
+`deploy/alerting/README.md` for a systemd unit and the delivery guarantees.
 
 ## What is not included
 
@@ -641,7 +692,7 @@ staleness) and its HTTP surface.
 Desktop-only features are intentionally absent:
 
 * traceroute/MTR, bandwidth, Warp, port scan and DNS lookup;
-* desktop notifications, webhooks, Telegram/Discord/ntfy alerts;
+* desktop notifications and the app's built-in chat/webhook senders; headless pushes nothing by itself, so use the event feed and `deploy/alerting/` (see Alerting above);
 * 30-day uptime history and CSV/JSON export;
 * hot reload (`SIGHUP`) and TLS/authentication on the HTTP server.
 

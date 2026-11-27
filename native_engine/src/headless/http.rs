@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 
 use super::log;
-use super::{metrics, Snapshot, State, NAME, VERSION};
+use super::{events, metrics, Snapshot, State, NAME, VERSION};
 
 /// Fixed worker pool: a slow or malicious client can pin at most this many
 /// threads, no matter how many TCP connections are open.
@@ -290,8 +290,13 @@ fn handle_connection(mut stream: TcpStream, state: &State, token: Option<&str>) 
         return;
     }
 
-    let path = target.split("?").next().unwrap_or("");
-    let path = path.split("#").next().unwrap_or("");
+    // The query string is kept: /api/v1/events?since=N needs the cursor,
+    // while every other route ignores it.
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) => (path, query),
+        None => (target, ""),
+    };
+    let path = path.split('#').next().unwrap_or("");
     let head_only = method.eq_ignore_ascii_case("HEAD");
     let response = if !(method.eq_ignore_ascii_case("GET") || head_only) {
         Response {
@@ -306,7 +311,7 @@ fn handle_connection(mut stream: TcpStream, state: &State, token: Option<&str>) 
         // /healthz stays open: container and systemd probes usually cannot
         // send headers, and it reveals nothing about the targets.
         if path == "/healthz" || authorized(&request, expected) {
-            route(path, state)
+            route(path, query, state)
         } else {
             Response {
                 challenge: Some("Bearer realm=\"netstudio\""),
@@ -318,7 +323,7 @@ fn handle_connection(mut stream: TcpStream, state: &State, token: Option<&str>) 
             }
         }
     } else {
-        route(path, state)
+        route(path, query, state)
     };
     state.note_http(path_label(path), response.status);
     write_response(&mut stream, &response, head_only);
@@ -333,6 +338,7 @@ fn path_label(path: &str) -> &'static str {
         "/readyz" => "/readyz",
         "/metrics" => "/metrics",
         "/api/v1/status" => "/api/v1/status",
+        "/api/v1/events" => "/api/v1/events",
         _ => "other",
     }
 }
@@ -413,13 +419,14 @@ fn read_request(stream: &mut TcpStream) -> Result<String, ReadError> {
     String::from_utf8(data).map_err(|_| ReadError::Incomplete)
 }
 
-fn route(path: &str, state: &State) -> Response {
+fn route(path: &str, query: &str, state: &State) -> Response {
     match path {
         "/" | "/index.html" => Response::text(
             200,
             "OK",
             format!(
-                "{NAME} {VERSION}\n\nGET /healthz\nGET /readyz\nGET /metrics\nGET /api/v1/status\n"
+                "{NAME} {VERSION}\n\nGET /healthz\nGET /readyz\nGET /metrics\n\
+                 GET /api/v1/status\nGET /api/v1/events?since=<seq>\n"
             ),
         ),
         "/healthz" => Response::text(200, "OK", "ok\n".to_string()),
@@ -448,6 +455,10 @@ fn route(path: &str, state: &State) -> Response {
             }
         }
         "/api/v1/status" => Response::json(format!("{}\n", state.snapshot().to_json())),
+        "/api/v1/events" => match events::since_param(query) {
+            Ok(since) => Response::json(format!("{}\n", state.event_page(since).to_json())),
+            Err(message) => Response::text(400, "Bad Request", format!("{message}\n")),
+        },
         _ => Response::text(404, "Not Found", "not found\n".to_string()),
     }
 }
@@ -655,6 +666,53 @@ mod tests {
         assert_eq!(json["schema"], 1);
         assert_eq!(json["targets"][0]["id"], 1);
         assert_eq!(json["targets"][0]["received_count"], 1);
+    }
+
+    fn transition(kind: &'static str) -> events::Event {
+        events::Event {
+            seq: 0,
+            at_ms: 1_000,
+            target_id: 1,
+            name: "edge".to_string(),
+            host: "10.0.0.1".to_string(),
+            protocol: "TCP".to_string(),
+            kind,
+            error: Some("timeout".to_string()),
+            error_kind: Some("timeout"),
+            outage_ms: None,
+        }
+    }
+
+    #[test]
+    fn the_event_feed_resumes_from_a_cursor() {
+        let state = state_with_sample();
+        let server = start(Arc::clone(&state));
+        let empty = request(&server, "GET", "/api/v1/events");
+        assert!(empty.starts_with("HTTP/1.1 200"), "{empty}");
+        let json: serde_json::Value = serde_json::from_str(body(&empty)).expect("json");
+        assert_eq!(json["schema"], 1);
+        assert_eq!(json["seq"], 0);
+        assert_eq!(json["events"].as_array().map(Vec::len), Some(0));
+
+        state.event_log().push(transition("down"));
+        state.event_log().push(transition("up"));
+        let all = request(&server, "GET", "/api/v1/events");
+        let json: serde_json::Value = serde_json::from_str(body(&all)).expect("json");
+        assert_eq!(json["seq"], 2);
+        assert_eq!(json["events"].as_array().map(Vec::len), Some(2));
+
+        let resumed = request(&server, "GET", "/api/v1/events?since=1");
+        let json: serde_json::Value = serde_json::from_str(body(&resumed)).expect("json");
+        assert_eq!(json["events"].as_array().map(Vec::len), Some(1));
+        assert_eq!(json["events"][0]["kind"], "up");
+
+        let invalid = request(&server, "GET", "/api/v1/events?since=soon");
+        assert!(invalid.starts_with("HTTP/1.1 400"), "{invalid}");
+
+        // The feed names targets and failure reasons: it stays behind the
+        // same bearer token as the status document.
+        let guarded = start_with_token(Arc::clone(&state), Some("s3cret"));
+        assert!(request(&guarded, "GET", "/api/v1/events").starts_with("HTTP/1.1 401"));
     }
 
     #[test]

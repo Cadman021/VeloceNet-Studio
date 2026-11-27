@@ -121,6 +121,10 @@ jobs:
         run: |
           shellcheck deploy/linux/build-package.sh
           shellcheck -s sh deploy/linux/debian/postinst deploy/linux/debian/prerm deploy/linux/debian/postrm
+      - name: Python helpers compile
+        run: |
+          python3 -m py_compile tool/headless-sbom.py deploy/alerting/netstudio-alert-bridge.py
+
       - name: SBOM generator
         run: |
           python3 tool/headless-sbom.py --output /tmp/netstudio-headless.cdx.json

@@ -19,6 +19,7 @@ deploy/linux/*.default text eol=lf
 deploy/linux/debian/* text eol=lf
 deploy/kubernetes/*.yaml text eol=lf
 tool/*.py text eol=lf
+deploy/alerting/*.py text eol=lf
 docs/completions/* text eol=lf
 docs/netstudio-headless.1 text eol=lf
 docs/netstudio-headless.schema.json text eol=lf
